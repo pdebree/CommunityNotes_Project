@@ -1,0 +1,63 @@
+---
+title: "unused_methods"
+output: html_document
+date: "2025-11-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Unused Methods 
+
+This file stores the unused methods that were explored in some parts of this project but, ultimately, were not used. 
+
+
+# fastText language detection 
+
+Problem here was that fastText did not work well with the amount of that needed to be processed. Even with batched processing it was not ideal. 
+
+```{r}
+# fastText language detection 
+
+# pretrained_fastText <- system.file("language_identification/lid.176.ftz", package = "fastText")
+# 
+# detect_english <- function(txt) {
+#   language_output <- fastText::language_identification(
+#     input_obj = txt,
+#     pre_trained_language_model_path = pretrained_fastText,
+#     k = 1,
+#     th = 0.0,
+#     verbose = FALSE)
+#   
+#   return(language_output$iso_lang_1 == "en")
+#   
+# }
+# 
+# problem_note <- batched_notes$`173`[172,"noteId"]
+# notes <- notes %>% filter(!(noteId == problem_note))
+# 
+# batch_size <- 1000
+# batched_notes <- notes %>% mutate(batch_id = (row_number() - 1) %/% batch_size) %>%
+#   split(.$batch_id)
+# 
+# # 3. Apply a dplyr pipeline (e.g., summarize each batch)
+# notes_list <- map(batched_notes, ~ .x %>% mutate(
+#   text_length = length(note_text),
+#   check_length = min(text_length, 100),
+#   is_english = cldetect_english(substring(note_text, 1, check_length))))
+# 
+# 
+# notes_lang_english <- bind_rows(notes_list)
+# 
+# # perform language detection and remove non-english notes (based on a threshold of 0.9)
+# notes_h <- notes %>% slice_sample(n=10000) %>% mutate(
+#   text_length = length(note_text), 
+#   check_length = min(text_length, 100),
+#   is_english = detect_english(substring(note_text, 1, check_length))) %>% 
+#   filter(is_english)# %>% select(-is_english)
+# 
+# 
+# 
+```
+

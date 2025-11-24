@@ -1,0 +1,50 @@
+---
+title: "ratings_processing"
+output: html_document
+date: "2025-11-24"
+---
+
+# Markdown file to process the ratings data. 
+
+There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in 
+
+```{r}
+notes_valid <- read.csv("data/valid_community_notes.csv")
+```
+
+
+```{r}
+valid_noteid <- notes_valid %>% pull(noteId)
+ratings_filepath_base <- "data/ratings-0000"
+i <- 0 
+end <- ".tsv"
+
+ratings_filepath <- paste(ratings_filepath_base, i, end, sep="")
+ratings_temp <- read_tsv(ratings_filepath)
+
+ratings_valid <- ratings_temp %>% mutate(
+  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC"), 
+  month_year = format(time_created, "%Y-%m")) %>% 
+  dplyr::select(-createdAtMillis) %>% filter(month_year > "2022-11", month_year < "2025-10") %>% filter(noteId %in% valid_noteid)
+
+# remove ratings frame 
+rm(ratings_temp)
+
+for (i in 1:2) {
+  ratings_filepath <- paste(ratings_filepath_base, i, end, sep="")
+  ratings_temp <- read_tsv(ratings_filepath)
+  
+  ratings_temp <- ratings_temp %>% mutate(
+    time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC"), 
+    month_year = format(time_created, "%Y-%m")) %>% 
+    dplyr::select(-createdAtMillis) %>% filter(month_year > "2022-11", month_year < "2025-10") %>% filter(noteId %in% valid_noteid)
+
+  ratings_valid <- rbind(ratings_valid, ratings_temp)
+  
+  # remove ratings frame 
+  rm(ratings_temp)
+  
+}
+
+```
+

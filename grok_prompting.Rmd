@@ -1,0 +1,70 @@
+---
+title: "prompting"
+output: html_document
+date: "2025-11-20"
+---
+
+
+```{r}
+library(tidyverse)
+library(httr2)
+library(jsonlite)
+grok_api_key <- Sys.getenv("GROK_API_KEY")
+```
+
+```{r}
+grok_url <- "https://api.x.ai/v1/chat/completions"
+grok_model <- "grok-3"
+
+
+user_prompt <- ""
+messages_list <- list(
+  # System prompt to set the persona
+  list(role = "system", content = "You are a content moderator for X's Community Notes, and have to score the following notes by these metrics."),
+  # User's current request
+  list(role = "user", content = user_prompt), 
+)
+
+# 3. Construct the full request body
+request_body <- list(
+  model = grok_model,
+  messages = messages_list,
+  temperature = 0.5, # Lower for more deterministic answers
+  max_tokens = 512,  # Limit the response size
+  stream = FALSE     # Set to TRUE if you want the output to appear as it's generated
+)
+
+
+# Build and execute the request pipeline
+grok_response <- request(grok_url) %>%
+  # Add required headers
+  req_headers(
+    "Authorization" = paste("Bearer", api_key),
+    "Content-Type" = "application/json"
+  ) %>%
+  # Attach the JSON request body
+  req_body_json(request_body) %>%
+  # Send the request
+  req_perform() %>%
+  # Convert the response body from JSON into an R list
+  resp_body_json()
+
+# Extract the text content from the nested list structure
+grok_answer <- grok_response$choices[[1]]$message$content
+
+# Print the result
+cat("\n--- Grok's Response ---\n")
+cat(grok_answer)
+```
+
+
+
+
+
+
+
+
+
+
+
+

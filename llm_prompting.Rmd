@@ -1,0 +1,145 @@
+---
+title: "prompting"
+output: html_document
+date: "2025-11-20"
+---
+
+
+```{r}
+library(tidyverse)
+library(httr2)
+library(jsonlite)
+library(usethis)
+grok_api_key <- Sys.getenv("GROK_API_KEY")
+openai_api_key <- Sys.getenv("OPENAI_API_KEY")
+
+```
+
+# Read in data 
+```{r}
+notes_valid_in <- read.csv("data/valid_community_notes.csv")
+```
+
+
+# Create list of prompts
+```{r}
+# can be altered for different topic groups
+prompt_creator <- function(notes_valid_in){
+  # Vector of the note text 
+  note_data <- notes_valid_in %>% pull(note_text)
+  return(note_data)
+}
+
+# create sample 
+sample_text <- prompt_creator(notes_valid_in %>% slice_sample(n=10))
+```
+
+
+Choices for which variables to include in the 
+
+```{r}
+notes_variables <- c("classification", "misleadingOther", "misleadingFactualError", "misleadingManipulatedMedia",
+                     "misleadingOutdatedInformation", "misleadingMissingImportantContext", "misleadingUnverifiedClaimAsFact",
+                     "misleadingSatire", "notMisleadingOther", "notMisleadingFactuallyCorrect",
+                     "notMisleadingOutdatedButNotWhenWritten", "notMisleadingClearlySatire", "notMisleadingPersonalOpinion")
+
+
+                     
+  
+  
+  
+```
+
+
+Problem: The above values come from the note maker - not the note rankers. 
+
+
+
+
+
+
+Change of view - we give the llm the note data (as is in the form of the notes data and we ask it to do the ratings based on the values in the ratings column). 
+
+
+
+- We know how the ratings end up (with the locked status or differnt)
+- We want to know if the values of the llm ratings come to the same conclusions as the raters did
+  - how do we model this? 
+
+
+
+```{r}
+# set parameters for grok prompt
+grok_url <- "https://api.x.ai/v1/chat/completions"
+grok_model <- "grok-3"
+
+
+user_prompt <- ""
+
+# create list of prompts ()
+messages_list <- list(
+  # System prompt to set the persona
+  list(role = "system", content = "You are a content moderator for X's Community Notes, and have to score the list of provided notes by these metrics."),
+  # User's current request
+  list(role = "user", content = user_prompt), 
+)
+
+# 3. Construct the full request body
+request_body <- list(
+  model = grok_model,
+  messages = messages_list,
+  temperature = 0.5, # Lower for more deterministic answers
+  max_tokens = 512,  # Limit the response size
+  stream = FALSE     # Set to TRUE if you want the output to appear as it's generated
+)
+
+
+# Build and execute the request pipeline
+grok_response <- request(grok_url) %>%
+  # Add required headers
+  req_headers(
+    "Authorization" = paste("Bearer", api_key),
+    "Content-Type" = "application/json"
+  ) %>%
+  # Attach the JSON request body
+  req_body_json(request_body) %>%
+  # Send the request
+  req_perform() %>%
+  # Convert the response body from JSON into an R list
+  resp_body_json()
+
+# Extract the text content from the nested list structure
+grok_answer <- grok_response$choices[[1]]$message$content
+
+# Print the result
+cat("\n--- Grok's Response ---\n")
+cat(grok_answer)
+```
+
+
+
+Using ellmer docs: 
+[https://www.oneusefulthing.org/p/using-ai-right-now-a-quick-guide
+https://ellmer.tidyverse.org/index.html
+ 
+
+Using openai package to prompt llms, because we want to try to use Grok and ellmer, unfortunately, does not have this capacity.
+
+
+```{r}
+create_openai_client(
+  api_key = grok_api_key,
+  base_url = "https://api.x.ai/v1"
+)
+
+```
+ 
+ 
+
+
+
+
+
+
+
+

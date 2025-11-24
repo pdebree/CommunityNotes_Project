@@ -1,0 +1,493 @@
+---
+title: "data_cleaning"
+output: html_document
+date: "2025-11-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Data Cleaning File 
+
+This .Rmd file contains the data cleaning necessary for our project.
+
+### Library Imports
+```{r}
+library(tidyverse)
+# For language input
+library(ellmer)
+library(cld2)
+library(stringr)
+library(openai)
+```
+
+
+### Data Imports
+
+The data, from the X website is updated daily. We take one day's worth of data
+
+The notes can be found at the https://communitynotes.x.com/guide/en/under-the-hood/download-data, 
+however it should be noted that only users with X accounts can download the data. 
+
+A good description can be found at the same website.
+
+As an overview the data takes on the following form: 
+- `notes` contains information about a note generally and how it can be 
+
+
+```{r}
+# contains the notes and their current status
+notes_uncleaned <- read_tsv("data/notes-00000.tsv")
+
+# contains a rating by a specific user on a specific note
+ratings_uncleaned <- read_tsv("data/ratings-00000.tsv")
+
+# contains
+notes_status_history_uncleaned <- read_tsv("data/noteStatusHistory-00000.tsv")
+
+# Contains data for individual raters
+# newUser: newly admitted users, who only have rating ability. 
+# earnedIn: users who've earned writing ability.
+# atRisk: users who are one Not Helpful note away from having writing ability locked. 
+# earnedOutNoAcknowledge: users with writing ability locked that have not yet clicked 
+# the acknowledgement button it in the product. 
+# earnedOutAcknowledge: users who've lost the ability to write and acknowledged 
+# it in the product, at which point their ratings start counting towards going back to earnedIn.
+user_enrollment_status_uncleaned <- read_tsv("data/userEnrollment-00000.tsv")
+
+# Note request data - contains a tweet, and a user who requested a 
+# community note for a specific tweet
+batSignals_uncleaned <- read_tsv("data/batSignals-00000.tsv")
+
+```
+
+
+# Data Description: 
+
+The data was taken from https://x.com/i/communitynotes/download-data (note: downloading this data does require an X account) on October 16th 2025. This means that the data we use are the community notes up to that date. 
+
+
+Note: `notes_status_history` has more notes that `notes`
+
+
+
+# Cleaning 
+```{r}
+# Cleaning to make time values interpretable 
+notes <- notes_uncleaned %>% mutate(
+  note_text = summary,
+  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC")) %>%
+  dplyr::select(-summary, -createdAtMillis)
+
+ratings <- ratings_uncleaned %>% mutate(
+  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC")) %>% 
+  dplyr::select(-createdAtMillis)
+
+notes_status_history <- notes_status_history_uncleaned %>% mutate(
+  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC"),
+  timestamp_final_scoring_output = as.POSIXct(
+    timestampMinuteOfFinalScoringOutput/1000, origin = "1970-01-01", tz = "UTC"), 
+  timestamp_most_recent_change =  as.POSIXct(
+    timestampMillisOfMostRecentStatusChange/1000, origin = "1970-01-01", tz = "UTC")
+  ) %>% 
+  dplyr::select(-createdAtMillis, -timestampMinuteOfFinalScoringOutput, -timestampMillisOfMostRecentStatusChange)
+
+# batSignals - we can't ge the actual tweet information but here we can look at how well the 
+# response is to a request (based on timestamp)
+batSignals <- batSignals_cleaned %>% mutate(
+  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC")) %>% 
+  dplyr::select(-createdAtMillis)
+
+user_enrollment_status <- user_enrollment_status_uncleaned %>% mutate(
+  time_last_earned_out = as.POSIXct(timestampOfLastEarnOut/1000, origin = "1970-01-01", tz = "UTC"), 
+  time_last_state_change = as.POSIXct(timestampOfLastEarnOut/1000, origin = "1970-01-01", tz = "UTC")) %>% 
+  dplyr::select(-timestampOfLastEarnOut, -timestampOfLastStateChange)
+
+```
+
+
+
+# Drop NA
+
+There are two notes with missing text values - we'll drop them.
+```{r}
+notes <- notes %>% filter(!is.na(note_text))
+```
+
+Now, we assume that all noteIds in the notes dataset are unique, but let's check
+
+```{r}
+length(unique(notes$noteId))
+# gives 2153198
+
+length(notes$noteId) 
+# gives 2153202
+
+# We have 4 extra rows - pull turns a column into a vector 
+duplicated_noteIds <- notes %>% filter(duplicated(noteId)) %>% pull(noteId)
+
+# These are all classified as MISINFORMED_OR_POTENTIALLY_MISLEADING, however the rows are not 
+# exact duplicates. Even the text is different. 
+notes %>% filter(noteId %in% duplicated_noteIds)
+# because of this confusion I think it is ok to drop these duplicate rows 
+
+# Remove the duplicate row ids - this removes 8 rows from the dataset. 
+notes <- notes %>% filter(!(noteId %in% duplicated_noteIds))
+
+```
+
+
+```{r}
+length(unique(notes_status_history$noteId))
+# gives 2153198
+
+length(notes_status_history$noteId) 
+# gives 2153202
+
+# We have 4 extra rows - pull turns a column into a vector 
+duplicated_notestatus_noteIds <- notes_status_history %>% filter(duplicated(noteId)) %>% pull(noteId)
+
+# These are all classified as NEEDS_MORE_RATINGS, however the rows are not 
+# exact duplicates. Even the text is different. 
+notes_status_history %>% filter(noteId %in% duplicated_notestatus_noteIds)
+# because of this confusion I think it is ok to drop these duplicate rows 
+
+# Remove the duplicate row ids - this removes 8 rows from the dataset. 
+notes_status_history <- notes_status_history %>% filter(!(noteId %in%duplicated_notestatus_noteIds))
+
+```
+
+Pre-trained language detection model 
+
+
+# Trends over time
+
+Interesting to look at how the trends of notes have changed over time generally
+- We can look at both how notes have changed over time, how ratings have changed over
+time. The easiest way to do this is just to look at the counts per month. 
+
+# Consider missing values 
+
+How many missing values does a bad rating make? 
+
+All the missing values come from the helpfulnessLevel column. There are 3,683
+missing values.
+
+```{r}
+colSums(is.na(ratings)) # This gives us that only the helpfulnessLevel 
+# value had missing values - 3693 of them
+
+```
+
+First it is helpful to group by month to see how this changes over time.
+
+```{r}
+notes <- notes %>% mutate(month_year = format(time_created, "%Y-%m")) 
+ratings <- ratings %>% mutate(month_year = format(time_created, "%Y-%m")) 
+```
+
+
+
+
+```{r}
+# Now let's count the missing values by their month
+ratings %>% group_by(month_year) %>% 
+  summarize(na_counts=sum(is.na(helpfulnessLevel)),
+            non_na_counts=sum(!is.na(helpfulnessLevel)))
+```
+
+
+The output from this shows that the `helpfulnessLevel` metric is only missing 
+values in the early months of 2021. Then, in June there are a few non-missing
+values. This implies that this metric was introduced later, and for this 
+reason there are no values in the early months of 2021. (Community Notes
+was started in 2021). 
+
+
+Now let's look at the notes missing values more generally. First, it is 
+helpful to look at the number of missing values from each column. The code below
+does this.
+
+```{r}
+colSums(is.na(notes))
+```
+
+From this, we found that the exact same number of pieces of missing data came
+from three attributes: `harmful`, `believable`, `validationDifficulty`. There 
+seems to be systematic discrepancy here and, again, looking at time will be 
+helpful. We can just look at one of these three values in order to see the
+number of missing values. Let's similarly count the number of missing values
+for each `month_year` value to see if there is an identifiable trend. 
+
+
+```{r}
+notes %>% group_by(month_year) %>% 
+  summarize(harmful_na=sum(is.na(harmful)),
+            harmful_not_na=sum(!is.na(harmful)), 
+            believable_na=sum(is.na(believable)),
+            believable_not_na=sum(!is.na(believable)),
+            validationDifficulty_na=sum(is.na(validationDifficulty)),
+            validationDifficulty_not_na=sum(!is.na(validationDifficulty)))
+
+print(notes %>% group_by(month_year) %>% 
+  summarize(harmful_na=sum(is.na(harmful)),
+            harmful_not_na=sum(!is.na(harmful)), 
+            believable_na=sum(is.na(believable)),
+            believable_not_na=sum(!is.na(believable)),
+            validationDifficulty_na=sum(is.na(validationDifficulty)),
+            validationDifficulty_not_na=sum(!is.na(validationDifficulty))), n=Inf, width=Inf)
+```
+
+
+The above output shows that though not exclusively missing, the NA values for `harmful`, `believable` and  `validationDifficulty` come from the same rows (the counts are the same for the na and non-na groups). 
+There are no values 
+
+All data points miss `harmful`, `believable` and  `validationDifficulty` values after November 2022 (this is also when the program went global). As a result, we drop the columns completely. 
+
+```{r}
+notes <- notes %>% select(-harmful, -believable, -validationDifficulty)
+```
+
+
+```{r}
+notes %>% mutate(month_year = format(time_created, "%Y-%m")) %>% group_by(month_year) %>% summarize(notes=n())
+```
+
+
+Limit time to relevant area - from when it went global (In November 2022) to September 2025 (get a full month). This does not get rid of too much data because there really wasn't much use before March 2023.
+
+
+As we have said from the exploration above, there is a demarcation with when community notes became really actively used. And we only have data that goes up to October 16th 2025. (Relevant that the ceasefire was on October 10th 2025)
+
+```{r}
+notes <- notes %>% filter(month_year > "2022-11", month_year < "2025-10")
+```
+
+
+
+Now that we have month_year combinations we can look a bit into how the number of notes and ratings have changed over time. It is also interesting to see how many ratings per note there are. 
+
+```{r}
+# DO THIS!!!
+ggplot(data=notes, aes(x=month_year)) + geom_histogram(stat="count")
+ggplot(data=ratings, aes(x=month_year)) + geom_histogram(stat="count")
+ggplot(data=)
+
+
+# Also interesting to look at ratings per note, and see how this has altered over time. 
+```
+
+
+From looking into this data, we think it makes sense to look at a time frame where the platform was being consistently used. Community Notes was initially launched only in the US, in January 2021 but was introduced globally on December 12th 2022. However, it didn't really pick up until March 2023 (the total count of notes went from 5000 to 15000 from February to April). 
+
+Now let's look a bit into notes and ratings combinations - THIS DOES NOT CURRENTLY WORK 
+
+
+```{r}
+# Create counts for how many ratings each note has 
+ratings_note_counts <- ratings %>% group_by(noteId) %>% summarize(number_of_ratings=n())
+
+# Add ratings count to the notes dataframe, this allows us to see how the notes compare 
+# over time. 
+notes_w_counts <- left_join(notes, ratings_note_counts, by="noteId")
+
+
+```
+
+
+# CONFUSEDDDDDDD::: Not enough data for the Ratings - I ONLY DOWNLOADE ONE FILE :(
+
+From the Community Notes Website:
+"In order to get enough data from new raters to be able to assess how similarly they rate notes to others, we require a minimum of 10 ratings made before helpfulness scores are computed and ratings may be counted. Additionally, to help mitigate misuse of Community Notes, contributors with helpfulness scores that are too low are filtered out, since those contributors are consistently not found helpful by a diverse set of raters."
+
+It makes sense, from this to limit to only look at notes that have 10 ratings. Doing this removes a lot
+of the data - but if we don't do it, it is not really fair to pull conclusions from the notes data summaries (it would add a lot of noise to our models). Thankfully, it is fair to assume that our controversial topics will have more ratings per note than other topics. We look to see if this is true in the code below. 
+
+
+However, we can also just use the fact that note status history has a marker for when the note reached enough notes (though intuitively we should see that the number of ratings for all notes that have a `timestampMillisOfFirstNonNMRStatus`)
+
+
+```{r}
+noteIds_NONNMR <- notes_status_history %>% filter(!is.na(firstNonNMRStatus)) %>% pull(noteId)
+```
+
+
+
+```{r}
+# look for notes with NON-NMR ratings (this should remove a lot of notes because there will be plenty of notes that do not have enough ratings)
+noteIds_NONNMR <- notes_status_history %>% filter(!is.na(firstNonNMRStatus)) %>% pull(noteId)
+
+# Make a variable that contains whether a note is marked NONMR 
+notes_w_counts <- notes_w_counts %>% mutate(non_nmr=ifelse(noteId %in% noteIds_NONNMR, TRUE, FALSE))
+
+# check out how these two relate to each other. 
+notes_w_counts %>% group_by(non_nmr) %>% summarize(mean_raters=mean(number_of_ratings, na.rm=TRUE))
+
+#### WRITE ABOUT THIS A BIT 
+
+
+
+```
+
+All proposed notes start with the status of Needs More Ratings, and are shown to Contributors in order to gather ratings. Because we can only really come to conclusions about notes that have enough ratings, we should only look at those that have a first NONNMR status
+
+
+Surprisingly, we lose a lot of data doing this. (We got from around 1.4 million English notes to around 400,000 - this seems very low). However, we do just need to limit our data to that which has enough ratings.
+
+
+```{r}
+# Use locked status (THIS IS A MARKER THAT IT IS UNCHANGED AFTER 2 WEEKS AND HAS HIT IT'S FINAL FORM) - COULD ADD MORE COMPLEXITY
+# could just use locked status 
+notes_status <- notes_status_history %>% select(lockedStatus, noteId) %>% filter(
+  lockedStatus %in% c("CURRENTLY_RATED_NOT_HELPFUL", "CURRENTLY_RATED_HELPFUL"))
+
+# Do an inner join so we only get noteIds that are in both datasets
+notes_valid <- inner_join(notes, notes_status, by="noteId")
+
+```
+
+206,242
+
+271,018
+
+
+Before filtering to english we have: 
+360037 rows of valid data
+
+# Langauge Detection - Limit to Only English
+
+```{r}
+# google version - the function returns NA if the language could not be
+# reliably detected. 
+notes_lang <- notes_valid %>% mutate(
+  is_english = 
+    ifelse(cld2::detect_language(note_text) == "en", TRUE, FALSE))
+
+# limited to english
+notes_valid <- notes_lang %>% filter(is_english) %>% select(-is_english)
+
+```
+
+We now have 211170 notes.
+
+
+
+# Beginnings of Exploring Harmful Notes - Look at how these measure with the Ukraine / Gaza 
+# problems 
+
+
+```{r}
+# Look for notes that individuals have labeled as having the potential for considerable harm 
+notes %>% filter(harmful == "CONSIDERABLE_HARM") %>% 
+
+# Could consider looking at which topics are difficult to evaluate, but can cause considerable harm and how this interacts with the complexity of their history 
+```
+
+# Look into how the specific topics, from topic modeling, match with different 
+# categories for the complexity and such as 
+
+# Pull these directly from the open source code for community notes
+# Also something to be said for how broad this is
+
+
+```{r}
+
+# Altered the strings here from regex to regular strings 
+
+Topics.UkraineConflict = c(
+    "ukrain",  
+    "russia",
+    "kiev",
+    "kyiv",
+    "moscow",
+    "zelensky",
+    "putin")
+
+Topics.GazaConflict =  c(
+    "israel",
+    "palestin",  # intentionally shortened for expanded matching
+    "gaza",
+    "jerusalem",
+    "hamas")
+
+Topics.MessiRonaldo = c(
+    "messi",  # intentional whitespace to prevent prefix matches
+    "ronaldo")
+
+Topics.Scams = c(
+    "scam",
+    "undisclosed ad",  # intentional whitespace
+    "terms of service",  # intentional whitespace
+    "help.x.com",
+    "x.com/tos",
+    "engagement farm",  # intentional whitespace
+    "spam",
+    "gambling",
+    "apostas",
+    "apuestas",
+    "dropship",
+    "drop ship",  # intentional whitespace
+    "promotion")
+
+ukraine_pattern <- paste(Topics.UkraineConflict, collapse = "|")
+gaza_pattern <-  paste(Topics.GazaConflict, collapse = "|")
+messi_pattern <-  paste(Topics.MessiRonaldo, collapse = "|")
+scams_pattern <-  paste(Topics.Scams, collapse = "|")
+
+```
+
+
+# Add topic markers to each note 
+```{r}
+notes_valid <- notes_valid %>% mutate(
+  ukraine_conflict = grepl(pattern = ukraine_pattern, x = note_text, ignore.case = TRUE),
+  gaza_conflict = grepl(pattern = gaza_pattern, x = note_text, ignore.case = TRUE),
+  messi_ronaldo = grepl(pattern = messi_pattern, x = note_text, ignore.case = TRUE),
+  scams = grepl(pattern = scams_pattern, x = note_text, ignore.case = TRUE))
+```
+
+
+
+
+Note: NOW WE HAVE 206,242 rows
+
+### MAKE THIS MORE SOPHISTICATED POTENTIALLY WITH STM (klint)
+
+Let's see how many of each topic there are
+
+# consider this or not - original source tweets (how does this work with multiples)
+
+Drop the used id, and time created as we are not interested in who did the batSignal 
+```{r}
+batSignals_complete <- batSignals %>% filter(!is.na(sourceLink)) %>% 
+  select(tweetId, sourceLink) %>% distinct(tweetId, sourceLink, .keep_all = TRUE)
+notes_w_sourcelink <- left_join(notes, batSignals_complete, by="tweetId")
+```
+ 
+Had a case where there were multiple tweets for the same note. I decided to remove these directly 
+to avoid confusions. 
+ 
+Note: we now have multiple ratings because there are multiple tweets for each 
+
+
+
+
+LOOK OUT!!
+- `notes_status_history` has more notes than `notes` - assumption here is that there are more notes in the history because there will be deleted notes that do not appear in the notes 
+
+Check this out: 
+
+
+# Write our data
+```{r}
+write.csv(notes_valid, "data/valid_community_notes.csv", row.names=FALSE)
+
+read_write_check <- read.csv("data/valid_community_notes.csv")
+```
+
+
+
+
+
+
