@@ -9,7 +9,7 @@ date: "2025-11-20"
 library(tidyverse)
 library(httr2)
 library(jsonlite)
-grok_api_key <- Sys.getenv("GROK_API_KEY")
+api_key <- Sys.getenv("GROK_API_KEY")
 ```
 
 ```{r}
@@ -22,7 +22,7 @@ messages_list <- list(
   # System prompt to set the persona
   list(role = "system", content = "You are a content moderator for X's Community Notes, and have to score the following notes by these metrics."),
   # User's current request
-  list(role = "user", content = user_prompt), 
+  list(role = "user", content = user_prompt)
 )
 
 # 3. Construct the full request body
