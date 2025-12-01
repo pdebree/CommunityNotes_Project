@@ -4,142 +4,170 @@ output: html_document
 date: "2025-11-20"
 ---
 
-
 ```{r}
 library(tidyverse)
 library(httr2)
 library(jsonlite)
 library(usethis)
-grok_api_key <- Sys.getenv("GROK_API_KEY")
-openai_api_key <- Sys.getenv("OPENAI_API_KEY")
+library(data.table)
+source("grok_notes_prompting.R")
 
 ```
 
 # Read in data 
 ```{r}
+
+# Read in Valid Notes (by our previous definition fo what makes a note good)
 notes_valid_in <- read.csv("data/valid_community_notes.csv")
-```
+gaza_ukraine_notes <- read.csv("data/gaza_ukraine_notes.csv")
 
+# Make into a table and shuffle (to randomize)
+# We randomized in order to make sure that if we did not get all the ratings from the llm, the ones we did are good enough 
+gaza_ukraine_notes <- as.data.table(gaza_ukraine_notes) 
+gaza_ukraine_notes <- gaza_ukraine_notes[sample(.N)]
 
-# Create list of prompts
-```{r}
-# can be altered for different topic groups
-prompt_creator <- function(notes_valid_in){
-  # Vector of the note text 
-  note_data <- notes_valid_in %>% pull(note_text)
-  return(note_data)
+# pull out the note text from the subgroups 
+get_notes <- function(notes_data_valid) {
+  return(notes_data_valid[["note_text"]])
 }
 
-# create sample 
-sample_text <- prompt_creator(notes_valid_in %>% slice_sample(n=10))
+
+gaza_ukraine_text <- get_notes(gaza_ukraine_notes)
+group_size <- 200
+
+# make groups of size 200 to prompt grok with. 
+group_texts <- gl(
+  n = ceiling(length(gaza_ukraine_text) / group_size), 
+  k = group_size, 
+  length = length(gaza_ukraine_text)
+)
+
+gaza_ukraine_texts_split <- split(gaza_ukraine_text, group_texts)
+
 ```
 
+# Make attributes ready:
 
-Choices for which variables to include in the 
 
+After looking at some of the data, we only have some columns that are helpful. Ultimately, we are most focused on the
+helpfulnessLevel attributes - but since we are limited by not having the tweet data it is helpful to have more nuanced inputs.
+
+
+# Talk about why we chose which ratings parameters (could not include those that have are really reliant on the tweet, because we don't have that text)
+These are the rating attributes I have removed:helpfulAddressesClaim", "helpfulImportantContext","notHelpfulMissingKeyPoints","notHelpfulIrrelevantSources",  "notHelpfulNoteNotNeeded"
+
+
+This is obviously a serious limitiation of this project, but we are working around it.
+
+
+Using grok-3 because I don't have the time to mess around with how grok-4-fast wants to be different
+
+
+Load in model parameters for prompting: 
 ```{r}
-notes_variables <- c("classification", "misleadingOther", "misleadingFactualError", "misleadingManipulatedMedia",
-                     "misleadingOutdatedInformation", "misleadingMissingImportantContext", "misleadingUnverifiedClaimAsFact",
-                     "misleadingSatire", "notMisleadingOther", "notMisleadingFactuallyCorrect",
-                     "notMisleadingOutdatedButNotWhenWritten", "notMisleadingClearlySatire", "notMisleadingPersonalOpinion")
-
-
-                     
-  
-  
-  
-```
-
-
-Problem: The above values come from the note maker - not the note rankers. 
-
-
-
-
-
-
-Change of view - we give the llm the note data (as is in the form of the notes data and we ask it to do the ratings based on the values in the ratings column). 
-
-
-
-- We know how the ratings end up (with the locked status or differnt)
-- We want to know if the values of the llm ratings come to the same conclusions as the raters did
-  - how do we model this? 
-
-
-
-```{r}
-# set parameters for grok prompt
-grok_url <- "https://api.x.ai/v1/chat/completions"
+grok_api_key <- Sys.getenv("GROK_API_KEY")
 grok_model <- "grok-3"
+grok_url <- "https://api.x.ai/v1/chat/completions"
+system_prompt <- paste(
+  "You are an expert evaluator of X's Community Notes. Your task is to analyze the provided note's text, and generate a set of ratings based purely on the note's quality of information",
+  "---",
+  "**CRITICAL CONSTRAINT:** You must set **exactly one** of the three helpfulness level fields (`helpfulnessLevel_helpful`, `helpfulnessLevel_somewhathelpful`, or `helpfulnessLevel_nothelpful`) to `TRUE, and the other two to `FALSE`.",
+  "**CRITICAL CONSTRAINT:** For the other 9 fields, set them to `TRUE` if the characteristic applies to the note, and `FALSE` if it does not. The must be named exactly as follows: `helpfulClear`, `helpfulGoodSources`, `helpfulUnbiasedLanguage`, `notHelpfulIncorrect`,`notHelpfulSourcesMissingOrUnreliable`, `notHelpfulHardToUnderstand`, `notHelpfulArgumentativeOrBiased`, `notHelpfulSpamHarassmentOrAbuse`, `notHelpfulOpinionSpeculation",
+  "---",
+  "**CRITICAL CONSTRAINT:** Your response MUST be a JSON object that strictly adheres to the provided JSON Schema. The key values of the JSON Schema for every note MUST be the same as the JSON schema input. Do not include any text, reasoning, or formatting outside of the JSON object. There must be 200 outputs")
+
+```
+
+We had to iterate over quite a few versions of this system prompt before we got to a point that we were happy with. This was an unexpectedly large amount of effort and took us quite a while to figure out. There are probably upwards of 10 versions that we tried, and then once we tried we had to see how well the prompt scaled up. This was another issue. 
 
 
-user_prompt <- ""
+User prompt looks like this: 
+"**TEXT:** ", text, "\n\n",
+"Generate the structured rating in the required format."))}
 
-# create list of prompts ()
-messages_list <- list(
-  # System prompt to set the persona
-  list(role = "system", content = "You are a content moderator for X's Community Notes, and have to score the list of provided notes by these metrics."),
-  # User's current request
-  list(role = "user", content = user_prompt), 
-)
-
-# 3. Construct the full request body
-request_body <- list(
-  model = grok_model,
-  messages = messages_list,
-  temperature = 0.5, # Lower for more deterministic answers
-  max_tokens = 512,  # Limit the response size
-  stream = FALSE     # Set to TRUE if you want the output to appear as it's generated
-)
-
-
-# Build and execute the request pipeline
-grok_response <- request(grok_url) %>%
-  # Add required headers
-  req_headers(
-    "Authorization" = paste("Bearer", api_key),
-    "Content-Type" = "application/json"
-  ) %>%
-  # Attach the JSON request body
-  req_body_json(request_body) %>%
-  # Send the request
-  req_perform() %>%
-  # Convert the response body from JSON into an R list
-  resp_body_json()
-
-# Extract the text content from the nested list structure
-grok_answer <- grok_response$choices[[1]]$message$content
-
-# Print the result
-cat("\n--- Grok's Response ---\n")
-cat(grok_answer)
+# Ready data here
+```{r}
+# Ready
+#notes <- 
 ```
 
 
 
-Using ellmer docs: 
-[https://www.oneusefulthing.org/p/using-ai-right-now-a-quick-guide
-https://ellmer.tidyverse.org/index.html
- 
 
-Using openai package to prompt llms, because we want to try to use Grok and ellmer, unfortunately, does not have this capacity.
+
+# Create the Ratings 
+
+The code for this can be found in 
+
+Talk about challenges in doing this
+- limited resources for numnber of notes looked at
+- Really struggled to find 
+
+Below we run the functions in the grok_notes_prompting.R script
+```{r}
+# Make the JSON schema for our LLM prompt output. 
+json_schema <- make_json_schema()
+
+
+# sample notes for test 
+noteText1 <- "This is not true, the eiffel tower is 2 feet tall."
+noteText2 <- "This is false, there are only 11 football players in an english football team."
+notes <- c(noteText1, noteText2)
+
+json_schema <- make_json_schema()
+# Make the messages for our LLM API request. This is essentially the system prompt and inidividual user prompts for our 
+# notes. 
+
+grok_ratings <- list()
+
+for (i in 1:8) {
+  
+  notes_messages <- make_request_message(gaza_ukraine_texts_split[[8]])
+   
+  # perform request
+  grok_ratings_request_output <- perform_request(messages=notes_messages, notes_json_schema=json_schema)
+
+  # we do the formatting after we get the output - to ensure that we can get the data without any formatting 
+  # issues making the output unuseable
+
+  # pull out content from response, of JSON output
+  json_data_string <- resp_body_json(grok_ratings_request_output)$choices[[1]]$message$content
+  
+  grok_ratings[i] <- fromJSON(json_data_string)
+}
+```
+
+
+From this we got 8 times 200 rows but the 4th and 7th frame do not have exactly 200 rows - meaning we cannot directly mark them with their noteIds. This is a bit of cause for concern generally with using the llm to generate data. We chose to just remove the 4th and 7th and continue with the other 6 groups of data - taking us to 1200 rows of generated llm data.
 
 
 ```{r}
-create_openai_client(
-  api_key = grok_api_key,
-  base_url = "https://api.x.ai/v1"
-)
+# For example - all came out different.
+grok_ratings$one <- fromJSON(json_data_string)$notes
+grok_ratings$two <- fromJSON(json_data_string)$reasonEvaluations
+
+# For some the reason codes were nested.
+grok_ratings$seven <- grok_results$seven$notes %>% unnest(ratings)
+
+# print length of each rating frame (to check they are the expected output)
+for (i in 1:8){
+  print(length(grok_ratings[1]))
+}
+
+# This output gave that all the frames were 200 (as expected) except for the 4th (which had 3 extra rows) and 
+# the seventh, which had 1 missing row. 
+
+# added the noteId values back manually.
+grok_ratings$eight$note_id <- gaza_ukraine_notes$noteId[1401:1600]
+
+# valid ratings  
+valid_grok_outputs <- grok_ratings[-c(4,7)]
+valid_grok_ratings_frame <- bind_rows(valid_grok_outputs)
+
+# remove non-essential rows
+valid_grok_ratings_frame <- valid_grok_ratings_frame %>% dplyr::select(-c("noteText", "noteId"))
+
+# save grok outputs 
+write.csv(valid_grok_ratings_frame, "valid_grok_ratings.csv", row.names=FALSE)
 
 ```
- 
- 
-
-
-
-
-
-
-
-

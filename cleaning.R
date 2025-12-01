@@ -91,8 +91,8 @@ limit_nonnmr_notes <- function(notes_status_history_data) {
   notes_status <- notes_status_history_data %>% 
     # get rid of rows that only have needs more ratings values
     filter(!is.na(firstNonNMRStatus)) %>% 
-    # get lockedStatus and noteId and filter to only conclusive outputs
-    select(lockedStatus, noteId) %>% filter(
+    # get lockedStatus and noteId and filter to only conclusive outputs - take currentDecidedBy
+    select(lockedStatus, noteId, currentDecidedBy) %>% filter(
       # limit to only notes "CURRENTLY_RATED_NOT_HELPFUL" or "CURRENTLY_RATED_HELPFUL
       lockedStatus %in% c("CURRENTLY_RATED_NOT_HELPFUL", "CURRENTLY_RATED_HELPFUL"))
   return(notes_status)
@@ -122,7 +122,7 @@ clean_notes <- function(notes) {
 
 clean_notes_history <- function(notes_status_history){
   notes_status_history <- remove_missing_noteId(notes_status_history)
-  retrn(notes_status_history)
+  return(notes_status_history)
 }
 
 
@@ -139,6 +139,7 @@ get_valid_notes <- function(notes_data, notes_status_history){
   notes_data <- limit_dates(notes_data)
   notes_status <- limit_nonnmr_notes(notes_status_history)
   notes_valid <- inner_join(notes_data, notes_status, by="noteId")
+  notes_valid <- limit_english(notes_valid)
   return(notes_valid)
 }
 
@@ -150,10 +151,9 @@ ratings_reader <- function(single_ratings_filepath, valid_note_ids){
                       # a note on rater participant ID (this would be really useful in further evals - with nuance into the raters) 
                       # we do the filtering during the read in with the hopes that this will make the amount of data more reasonable
                       select=c("noteId", "createdAtMillis", "helpfulnessLevel", "helpfulClear", "helpfulGoodSources",
-                               "helpfulUnbiasedLanguage",
-                               "notHelpfulIncorrect", "notHelpfulSourcesMissingOrUnreliable", "notHelpfulHardToUnderstand",
-                               "notHelpfulArgumentativeOrBiased", "notHelpfulSpamHarassmentOrAbuse",
-                               "notHelpfulOpinionSpeculation", "raterParticipantId", "ratedOnTweetID"))
+                               "helpfulUnbiasedLanguage", "notHelpfulIncorrect", "notHelpfulSourcesMissingOrUnreliable", 
+                               "notHelpfulHardToUnderstand", "notHelpfulArgumentativeOrBiased", "notHelpfulSpamHarassmentOrAbuse",
+                               "notHelpfulOpinionSpeculation", "raterParticipantId", "ratedOnTweetId"))
   
   table <- temp_table %>% 
     # make month data - and remove non-relevant data files

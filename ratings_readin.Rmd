@@ -4,47 +4,88 @@ output: html_document
 date: "2025-11-24"
 ---
 
-# Markdown file to process the ratings data. 
-
-There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in 
-
 ```{r}
-notes_valid <- read.csv("data/valid_community_notes.csv")
+library(tidyverse)
+source("cleaning.R")
+library(data.table)
 ```
 
 
+
 ```{r}
-valid_noteid <- notes_valid %>% pull(noteId)
-ratings_filepath_base <- "data/ratings-0000"
-i <- 0 
-end <- ".tsv"
+english_valid_notes <- read.csv("data/english_valid_notes.csv")
+valid_notes_ids <- english_valid_notes %>% pull(noteId)
+```
 
-ratings_filepath <- paste(ratings_filepath_base, i, end, sep="")
-ratings_temp <- read_tsv(ratings_filepath)
 
-ratings_valid <- ratings_temp %>% mutate(
-  time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC"), 
-  month_year = format(time_created, "%Y-%m")) %>% 
-  dplyr::select(-createdAtMillis) %>% filter(month_year > "2022-11", month_year < "2025-10") %>% filter(noteId %in% valid_noteid)
 
-# remove ratings frame 
-rm(ratings_temp)
 
-for (i in 1:2) {
-  ratings_filepath <- paste(ratings_filepath_base, i, end, sep="")
-  ratings_temp <- read_tsv(ratings_filepath)
+
+# Code to create average ratings across ratings dataset
+
+Need to find the average rating for all users - for noteIds. Then we either use this average ratings (or we push the values to 0 and 1 - to make the outputs more like the llm outputs we will get). 
+
+The values we will need to process are as follows: 
+
+
+Future work could include doing more complex modeling of the variation in the raters. 
+
+
+Check that agree and disagree are completely mutually exclusive - both of these have 0 values so we just remove them 
+
+Go rid of the following variables: 
+- `agree`, `disagree`, `helpful`, `ratingSourceBucketed`, `version`, `notHelpful`, `helpfulOther` (this is just like a helpfulness without distinction mark - not really useful), `helpfulInformative` 
+
+"notHelpfulOpinionSpeculationOrBias"  
+
+We should get something like the helpfuls all add up (i.e. mutually exclusive multiple choice?)
+
+
+
+Keep following variables: 
+- `Help
+```{r}
+ratings_value_variables <- c("helpfulnessLevel_helpful", "helpfulnessLevel_somewhathelpful", "helpfulnessLevel_nothelpful", "helpfulClear", "helpfulGoodSources", "helpfulAddressesClaim", "helpfulImportantContext", "helpfulUnbiasedLanguage", "notHelpfulIncorrect", "notHelpfulSourcesMissingOrUnreliable", "notHelpfulMissingKeyPoints", "notHelpfulHardToUnderstand", "notHelpfulArgumentativeOrBiased", "notHelpfulSpamHarassmentOrAbuse", "notHelpfulIrrelevantSources", "notHelpfulOpinionSpeculation", "notHelpfulNoteNotNeeded")    
+
+ratings_logisitic_variables <- c("noteId", "raterParticipantId", "time_created","month_year")
+
+# Find the means of these columns, but only in their noteId groups (this gives us an average of the sentiments for each noteId)
+mean_ratings <- ratings_valid %>% mutate(
+  helpfulnessLevel_helpful = (helpfulnessLevel == "HELPFUL"),
+  helpfulnessLevel_somewhathelpful = (helpfulnessLevel == "SOMEWHAT_HELPFUL"),
+  helpfulnessLevel_nothelpful= (helpfulnessLevel == "NOT_HELPFUL")) %>% 
+    select(all_of(ratings_value_variables), all_of(ratings_logisitic_variables)) %>% 
+  group_by(noteId) %>% summarize(across(all_of(ratings_value_variables), mean, na.rm = TRUE)
   
-  ratings_temp <- ratings_temp %>% mutate(
-    time_created = as.POSIXct(createdAtMillis/1000, origin = "1970-01-01", tz = "UTC"), 
-    month_year = format(time_created, "%Y-%m")) %>% 
-    dplyr::select(-createdAtMillis) %>% filter(month_year > "2022-11", month_year < "2025-10") %>% filter(noteId %in% valid_noteid)
+```
 
-  ratings_valid <- rbind(ratings_valid, ratings_temp)
-  
-  # remove ratings frame 
-  rm(ratings_temp)
-  
-}
+
+
+
+```{r}
+# Modeling variables 
+notes_modeling_variables <- c("lockedStatus", "ukraine_conflict", "gaza_conflict", "messi_ronaldo", "scams", "noteId")
+
+# Add in locked status 
+modeling_ratings <- left_join(mean_ratings, notes_valid %>% select(all_of(notes_modeling_variables)), by="noteId") %>% mutate(rated_helpful=(lockedStatus=="CURRENTLY_RATED_HELPFUL"))
+```
+
+
+Intuition is that a random forest will do better because the form of the data. We have subgroups within the helpfulness levels.
+
+(Question - are we as concerned with multi collinarity with a random forest?)
+
+
+
+```{r}
+first_fit <- lm(rated_helpful ~ helpfulnessLevel_helpful,data=modeling_ratings)
 
 ```
+
+
+
+
+
+
+
 

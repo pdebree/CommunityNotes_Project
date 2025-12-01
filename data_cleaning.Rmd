@@ -22,6 +22,10 @@ library(stringr)
 library(openai)
 library(data.table)
 library(stm)
+library(MASS)
+library(tm)
+library(topicmodels)
+library(tidytext)
 ```
 
 
@@ -149,6 +153,7 @@ As we have said from the exploration above, there is a demarcation with when com
 Now that we have month_year combinations we can look a bit into how the number of notes and ratings have changed over time. It is also interesting to see how many ratings per note there are. 
 
 ```{r}
+# Work on this
 ggplot(data=notes, aes(x=month_year)) + geom_histogram(stat="count")
 # add in line for election?
 
@@ -165,12 +170,93 @@ Once we have our cleaned data, we can begin to think about what makes a note val
 
 ```{r}
 valid_notes <- get_valid_notes(notes, notes_status_history)
-english_valid_notes <- limit_english(valid_notes)
+#english_valid_notes <- limit_english(valid_notes)
 # notes_w_sourcelink <- left_join(notes, batSignals_complete, by="tweetId")
 
 write.csv(english_valid_notes, "data/english_valid_notes.csv", row.names=FALSE)
 
 ```
+
+Table current groups across data
+```{r}
+table(valid_notes$currentDecidedBy)
+```
+
+
+# Topics
+
+```{r}
+source("topic_modeling.R")
+topic_valid_notes <- mark_topics(valid_notes)
+topic_only_valid <- limit_to_four_topics(topic_valid_notes)
+
+table(topic_only_valid$currentDecidedBy)
+
+topic_names <- c("ukraine_conflict", "gaza_conflict", "messi_ronaldo", "scams") 
+
+colSums(topic_only_valid[topic_names])
+```
+
+
+This is a really rough way of getting the data - we could use these seed terms to make more nuanced topic modeling. But, for our analysis we believe that finding a small subset is enough (especially given the constraint on our data). 
+
+Even though we have used specific words, from pre-made groups, we will use a traditional LDA to get a sense of how strictly we think these topics are defined. 
+
+We are only going to look at the notes that have the relevant topic seed words
+
+
+Note: we lose the validity of the URL (and being able to interpret it)
+
+```{r}
+notes_text <- topic_only_valid[["note_text"]]
+corpus <- VCorpus(VectorSource(notes_text))
+
+# preprocessing for tm values
+corpus <- tm_map(corpus, content_transformer(tolower)) 
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("english")) 
+
+
+dtm <- DocumentTermMatrix(corpus)
+dtm <- removeSparseTerms(dtm, sparse = 0.80) # this is especially a problem because we will lose URLS 
+
+dtm_matrix <- as.matrix(dtm)
+head(dtm_matrix)
+
+k_topics <- 4
+lda_model <- LDA(dtm, k = k_topics, control = list(seed = 123))
+
+print(lda_model)
+
+```
+
+```{r}
+topic_terms <- tidy(lda_model, matrix = "beta")
+
+# Find the top 10 terms for each topic
+top_terms <- topic_terms %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+
+# Print the top terms
+print(top_terms)
+```
+
+
+
+
+
+
+
+
+
+Similar proportion here 
+
+c(ukraine_pattern, gaza_pattern, messi_pattern, scams_pattern) 
+
 
 
 Ratings Read in 
@@ -178,6 +264,9 @@ Ratings Read in
 There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in 
 
 ```{r}
+# pull only valid note ids
+valid_notes_ids <- valid_notes %>% pull(noteId)
+
 ratings_valid <- read_in_ratings(valid_notes_ids)
 write.csv(ratings_data, "data/relevant_ratings.csv", row.names=FALSE)
 
@@ -190,6 +279,9 @@ write.csv(ratings_data, "data/relevant_ratings.csv", row.names=FALSE)
 
 
 
+
+
+------------------------ Needs work below here
 
 
 # Trends over time
@@ -375,28 +467,6 @@ e# Could consider looking at which topics are difficult to evaluate, but can cau
 
 ```{r}
 
-limit_to_four_topics <- function(notes){
-  notes <- notes %>% rowwise() %>% filter(sum(ukraine_conflict, gaza_conflict, messi_ronaldo, scams) > 0)
-  return(notes)
-}
-
-
-mark_topics <- function(notes) {
-  # Needs to take in a dataframe that has the note_text column. 
-  
-  ukraine_pattern <- paste(Topics.UkraineConflict, collapse = "|")
-  gaza_pattern <-  paste(Topics.GazaConflict, collapse = "|")
-  messi_pattern <-  paste(Topics.MessiRonaldo, collapse = "|")
-  scams_pattern <-  paste(Topics.Scams, collapse = "|")
-  
-  notes <- notes %>% mutate(
-    ukraine_conflict = grepl(pattern = ukraine_pattern, x = note_text, ignore.case = TRUE),
-    gaza_conflict = grepl(pattern = gaza_pattern, x = note_text, ignore.case = TRUE),
-    messi_ronaldo = grepl(pattern = messi_pattern, x = note_text, ignore.case = TRUE),
-    scams = grepl(pattern = scams_pattern, x = note_text, ignore.case = TRUE))
-  
-  return(notes)
-}
 
 
 
