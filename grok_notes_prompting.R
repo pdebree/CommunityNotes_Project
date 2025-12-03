@@ -58,14 +58,15 @@ make_json_schema <- function() {
   return(json_schema)
 }
 
-# Function to make prompts
+
 make_user_prompt <- function(text) {
+  # makes prompts from raw text 
   return(paste0(
     "**Community Note:** ", text, "\n\n"))}
 
 
 make_request_message <- function(note_text_list) {
-  # make a list object to hold messages 
+  # make a list object to hold messages (system prompt and user prompts)
   messages <- list(
     list(role = "system", content = system_prompt))
   

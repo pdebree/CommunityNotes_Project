@@ -4,33 +4,42 @@ output: html_document
 date: "2025-11-20"
 ---
 
+# Prompting Grok 
+
 ```{r}
 library(tidyverse)
 library(httr2)
 library(jsonlite)
 library(usethis)
 library(data.table)
+# R script with prompting functions
 source("grok_notes_prompting.R")
-
 ```
 
 # Read in data 
-```{r}
 
-# Read in Valid Notes (by our previous definition fo what makes a note good)
+We use the valid notes generated from our data cleaning process (found in `data_cleaning.Rmd`), as well as the notes with the topics Gaza and Ukraine - based on the Topic Modeling we performed in `topic_selection.Rmd`. 
+
+```{r}
+# Read in Valid English Notes (by our previous definition fo what makes a note good)
 notes_valid_in <- read.csv("data/valid_community_notes.csv")
 gaza_ukraine_notes <- read.csv("data/gaza_ukraine_notes.csv")
 
+```
+
+Below we create batches of data, group by 200, for API calls. Before doing this we shuffled all of the relevant Gaza and Ukraine data, so that any amount that we generated notes for would be a representative sample of the Gaza and Ukraine data. 
+
+```{r}
 # Make into a table and shuffle (to randomize)
 # We randomized in order to make sure that if we did not get all the ratings from the llm, the ones we did are good enough 
 gaza_ukraine_notes <- as.data.table(gaza_ukraine_notes) 
 gaza_ukraine_notes <- gaza_ukraine_notes[sample(.N)]
 
+
 # pull out the note text from the subgroups 
 get_notes <- function(notes_data_valid) {
   return(notes_data_valid[["note_text"]])
 }
-
 
 gaza_ukraine_text <- get_notes(gaza_ukraine_notes)
 group_size <- 200
@@ -49,19 +58,15 @@ gaza_ukraine_texts_split <- split(gaza_ukraine_text, group_texts)
 # Make attributes ready:
 
 
-After looking at some of the data, we only have some columns that are helpful. Ultimately, we are most focused on the
-helpfulnessLevel attributes - but since we are limited by not having the tweet data it is helpful to have more nuanced inputs.
+After looking at some of the data, we only have some columns that are helpful. Ultimately, we are most focused on the helpfulnessLevel attributes - but since we are limited by not having the tweet data it is helpful to have more nuanced inputs.
 
 
 # Talk about why we chose which ratings parameters (could not include those that have are really reliant on the tweet, because we don't have that text)
 These are the rating attributes I have removed:helpfulAddressesClaim", "helpfulImportantContext","notHelpfulMissingKeyPoints","notHelpfulIrrelevantSources",  "notHelpfulNoteNotNeeded"
 
 
-This is obviously a serious limitiation of this project, but we are working around it.
 
-
-Using grok-3 because I don't have the time to mess around with how grok-4-fast wants to be different
-
+The Grok API key is loaded in as a system variable. We use grok-3 because this was the most cost effective way to do our prompt engineering. 
 
 Load in model parameters for prompting: 
 ```{r}
@@ -85,60 +90,43 @@ User prompt looks like this:
 "**TEXT:** ", text, "\n\n",
 "Generate the structured rating in the required format."))}
 
-# Ready data here
-```{r}
-# Ready
-#notes <- 
-```
-
-
-
-
 
 # Create the Ratings 
 
-The code for this can be found in 
+The code for the actual api calls can be found in `grok_notes_prompting.R` but below we perform the batched api calls. We decided to do this here and not in the script because processing the generated data required quite a bit of effort and manual adjustments. 
 
-Talk about challenges in doing this
-- limited resources for numnber of notes looked at
-- Really struggled to find 
+First we create the schema, then we iterate over 8 groups of 200 notes to create the generated data. To do this we first turn the note text, and system prompt, into a messages list 
 
-Below we run the functions in the grok_notes_prompting.R script
 ```{r}
 # Make the JSON schema for our LLM prompt output. 
 json_schema <- make_json_schema()
 
 
-# sample notes for test 
-noteText1 <- "This is not true, the eiffel tower is 2 feet tall."
-noteText2 <- "This is false, there are only 11 football players in an english football team."
-notes <- c(noteText1, noteText2)
-
-json_schema <- make_json_schema()
-# Make the messages for our LLM API request. This is essentially the system prompt and inidividual user prompts for our 
-# notes. 
-
+# create a list to hold the output of our llm prompts. 
 grok_ratings <- list()
 
 for (i in 1:8) {
   
-  notes_messages <- make_request_message(gaza_ukraine_texts_split[[8]])
+  # create messages list
+  notes_messages <- make_request_message(gaza_ukraine_texts_split[[i]])
    
-  # perform request
+  # perform api request. 
   grok_ratings_request_output <- perform_request(messages=notes_messages, notes_json_schema=json_schema)
-
-  # we do the formatting after we get the output - to ensure that we can get the data without any formatting 
-  # issues making the output unuseable
 
   # pull out content from response, of JSON output
   json_data_string <- resp_body_json(grok_ratings_request_output)$choices[[1]]$message$content
   
+  # save JSON output to list of ratings.
   grok_ratings[i] <- fromJSON(json_data_string)
 }
 ```
 
 
-From this we got 8 times 200 rows but the 4th and 7th frame do not have exactly 200 rows - meaning we cannot directly mark them with their noteIds. This is a bit of cause for concern generally with using the llm to generate data. We chose to just remove the 4th and 7th and continue with the other 6 groups of data - taking us to 1200 rows of generated llm data.
+From this we got 8 different llm outputs, ostensibly based on the note text passed in. However, in two of the eight outputs the number of rating sets generated by Grok did not match 200. This meant we could not directly mark them with their noteIds - as the match would not be one-to-one. 
+
+This is a bit of cause for concern generally with using the llm to generate data. We chose to just remove the 4th and 7th and continue with the other 6 groups of data - taking us to 1200 rows of generated llm data. 
+
+Though we spent a lot altering the prompt to have the exactly JSON output schema, there were still issues with the output. Fortunately, after iterating over a few different strategies, the only issue we faced with our final prompt was that there could be issues, 
 
 
 ```{r}
