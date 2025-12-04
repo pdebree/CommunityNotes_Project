@@ -1,0 +1,192 @@
+---
+title: "topic_selection"
+output: html_document
+date: "2025-12-03"
+---
+
+```{r}
+library(tidyverse)
+# For language input
+library(ellmer)
+library(cld2)
+library(stringr)
+library(openai)
+library(data.table)
+library(stm)
+library(MASS)
+library(tm)
+library(topicmodels)
+library(tidytext)
+library(keyATM)
+library(quanteda)
+```
+
+
+# Topic Modeling 
+
+This notebook takes us through the process of creating defined topics for our Community Notes Project. Our idea in focusing on topics is to try to create distinct groups for the topics highlighted within X's code base (https://github.com/twitter/communitynotes/blob/main/scoring/src/scoring/topic_model.py). Our thinking in doing this is to find topics that are explicitly important to X - either because they are very sensitive subjects or because their values need more monitoring than others.
+
+Though X has not launched per-topic modeling yet - it does intend to evaluate this method ("This approach represents a prelimiary approach to topic assignment while Community Notes evaluates the efficacy of per-topic note scoring." - line 8 of the `topic_model.py` file linked above). 
+
+There are four topics that are explicitly called our by X in it's code base. This is done by having seed terms defined for these specific topics and then using these seed terms in the topic modeling. Though X does not limit topics to these groups, we were very interested in why they would declare seed terms for these groups specifically. 
+
+The topics with seed terms are as follows: 
+- `UkraineConflict`
+- `GazaConflict`
+- `MessiRonaldo`
+- `Scams`
+
+Intuitively, it makes sense that the first two topics - the conflict topics - are highlighted. X would want to be sensitive to how Community Notes responds to these areas, given the differences of opinions and mass misinformation spread about these conflicts. 
+
+We aren't quite sure why the question of the Greatest Footballer of All Time debate is included in these Seed Terms, but maybe it represents an area where opinion blurs fact. For example, imagine a tweet that claims Messi to be the best football player, somebody could create a note claiming that this is not true and that Ronaldo is better. This would not be a valid Community Note, but we could understand the logic of needing to ensure these types of notes are handled. 
+
+Finally, it is likely very important for X to minimize the amount of scams and misinformation that are spread on it's platform. For this reason, it makes sense that they target language used in addressing scams to safeguard the online community. 
+
+We should note, that these topics are generally applied to the tweet text as well as the notes text. (In X's code base they combine these two to do the topic modelling). Because we do not have access to the tweet data, our topic modeling is done only on the note text. This is a limitation as you could imagine a note that has a tone like this: "This is False, the war has not ended *link to source*". This is not specific enough to be bucketed into one conflict. Also a major limitation of topic modeling is that it loses the sentiment or topics that come from the linked urls. In the example tweet above, the conflict could be specified in the link - but regular language based topic modeling would not capture this. 
+
+
+
+
+```{r}
+# Only need valid notes here, ratings are not relevant to our topics. (They will be once we start modeling). 
+valid_notes <- read.csv("data/valid_notes.csv")
+```
+
+The functions for our topic modeling process can be found in `topic_modeling.R`. Below in the `mark_topics` function we create binary variable that indicate whether a note contains the 
+
+
+```{r}
+source("topic_modeling.R")
+# add seed term markers to our valid notes 
+topic_valid_notes <- mark_topics(valid_notes)
+
+topic_names <- c("ukraine_conflict", "gaza_conflict", "messi_ronaldo", "scams") 
+
+# Checking how many of each topic are seen by the values 
+colSums(topic_valid_notes[topic_names])
+
+topic_only_valid <- limit_to_four_topics(topic_valid_notes)
+gaza_ukraine_valid <- limit_gaza_ukraine(topic_valid_notes)
+
+write.csv(gaza_ukraine_valid, "data/gaza_ukraine_notes.csv", row.names=FALSE)
+
+
+```
+
+This is a really rough way of getting the data - we could use these seed terms to make more nuanced topic modeling. But, for our analysis we believe that finding a small subset is enough (especially given the constraint on our data). 
+
+As X uses these seed terms for its own topic modeling, we will do something similar to try to select the 
+
+Note: we lose the validity of the URL (and being able to interpret it)
+
+```{r}
+notes_text <- gaza_ukraine_valid[["note_text"]]
+corpus <- VCorpus(VectorSource(notes_text))
+
+# preprocessing for tm values
+corpus <- tm_map(corpus, content_transformer(tolower)) 
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("english")) 
+
+
+dtm <- DocumentTermMatrix(corpus)
+dtm <- removeSparseTerms(dtm, sparse = 0.99) # this is especially a problem because we will lose URLS 
+
+# totals for each row 
+rowTotals <- apply(dtm, 1, sum)
+
+dtm_matrix <- as.matrix(dtm)
+dtm_matrix <- dtm_matrix[rowTotals > 0, ]
+head(dtm_matrix)
+
+k_topics <- 2
+lda_model <- LDA(dtm_matrix, k = k_topics, control = list(seed = 123))
+
+print(lda_model)
+
+```
+
+
+
+
+# Trying topic models with KeyATM
+
+```{r}
+guk_notes_text <- english_valid_notes[["note_text"]]
+
+data_tokens <- tokens(
+  guk_notes_text,
+  remove_numbers = TRUE,
+  remove_punct = TRUE,
+  remove_symbols = TRUE,
+  remove_separators = TRUE
+) %>%
+  tokens_tolower() %>%
+  tokens_remove(
+    c(
+      stopwords("english"),
+      "may", "shall", "can",
+      "must", "upon", "with", "without"
+    )
+  ) %>%
+  tokens_select(min_nchar = 3)
+
+data_dfm <- dfm(data_tokens) %>%
+  dfm_trim(min_termfreq = 5, min_docfreq = 2)
+
+
+non_empty_doc_indices <- which(rowSums(data_dfm) > 0)
+
+# 2. Subset the DFM to only include non-empty documents
+data_dfm_filtered <- dfm_subset(
+    data_dfm,
+    non_empty_doc_indices
+)
+
+# This variable stores the index of the original 'guk_notes_text' document
+# that corresponds to each row in 'data_dfm_filtered'.
+kept_original_indices <- non_empty_doc_indices
+
+keyATM_docs <- keyATM_read(texts = data_dfm_filtered)
+summary(keyATM_docs)
+
+#keyATM_docs0 <- keyATM_read(texts = data_dfm_len0)
+
+keywords <- list(
+  Ukraine = Topics.UkraineConflict,
+  Gaza = Topics.GazaConflict,
+  Messi = Topics.MessiRonaldo,
+  Scams = Topics.Scams
+)
+
+key_viz <- visualize_keywords(docs = keyATM_docs, keywords = keywords)
+key_viz
+
+values_fig(key_viz)
+```
+
+```{r}
+set.seed(225) # set the seed before split the dfm
+docs_withSplit <- keyATM_read(
+  texts = data_dfm,
+  split = 0.3
+) # split each document
+
+out <- weightedLDA(
+  docs              = docs_withSplit$W_split, # 30% of the corpus
+  number_of_topics  = 5, # the number of potential themes in the corpus
+  model             = "base",
+  options           = list(seed = 250)
+)
+top_words(out) # top words can aid selecting keywords
+
+out <- keyATM(
+  docs              = docs_withSplit, # 70% of the corpus
+  no_keyword_topics = 5, # number of topics without keywords
+  keywords          = keywords, # selected keywords
+  model             = "base", # select the model
+  options           = list(seed = 250)
+)
+```
+
