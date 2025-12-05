@@ -1,12 +1,12 @@
 # Holds code for topic modeling within the community notes data
 
 Topics.UkraineConflict = c(
-  "ukrain",  
+  "ukrain",
   "russia",
   "kiev",
   "kyiv",
   "moscow",
-  "zelensky",
+  #"zelensky",
   "putin")
 
 Topics.GazaConflict =  c(
@@ -14,40 +14,60 @@ Topics.GazaConflict =  c(
   "palestin",  # intentionally shortened for expanded matching
   "gaza",
   "jerusalem",
-  "hamas")
+  "hama") # stemmed to hama - questionable
 
 Topics.MessiRonaldo = c(
   "messi",  # intentional whitespace to prevent prefix matches
   "ronaldo")
 
 Topics.Scams = c(
-  "scam",
-  "undisclosed ad",  # intentional whitespace
-  "terms of service",  # intentional whitespace
-  "help.x.com",
-  "x.com/tos",
-  "engagement farm",  # intentional whitespace
-  "spam",
-  "gambling",
-  "apostas",
-  "apuestas",
-  "dropship",
-  "drop ship",  # intentional whitespace
-  "promotion")
+  #"scam",
+  #"undisclosed",  # intentional whitespace
+  "term",  # intentional whitespace
+  #"help.x.com",
+  #"x.com/tos",
+  #"engag",  # intentional whitespace
+  "farm",
+  #"spam",
+  #"gambl",
+  #"apostas",
+  #"apuestas",
+  "dropship")
+  #"drop ship",  # intentional whitespace
+#promotion")
+
+
+
+keywords <- list(
+  Ukraine = Topics.UkraineConflict,
+  Gaza = Topics.GazaConflict,
+  Messi = Topics.MessiRonaldo,
+  Scams = Topics.Scams
+)
+
+# keywords for only gaza and ukraine
+keywords_gzuk <- list(
+  Ukraine = Topics.UkraineConflict,
+  Gaza = Topics.GazaConflict
+)
+
+
 
 
 limit_to_four_topics <- function(notes){
+  # Limits notes to only those that contain the seed terms for the four topics
   notes <- notes %>% rowwise() %>% filter(sum(ukraine_conflict, gaza_conflict, messi_ronaldo, scams) > 0) %>% ungroup()
   return(notes)
 }
 
 limit_gaza_ukraine <- function(notes){
+  # Limits notes to only those that contain the seed terms for the the ukraine and gaza conflicts
   notes <- notes %>% rowwise() %>% filter(sum(ukraine_conflict, gaza_conflict) > 0) %>% ungroup()
   return(notes)
 }
 
 mark_topics <- function(notes) {
-  # Needs to take in a dataframe that has the note_text column. 
+  # Marks notes that contain the seed terms for the four topcis
   
   ukraine_pattern <- paste(Topics.UkraineConflict, collapse = "|")
   gaza_pattern <-  paste(Topics.GazaConflict, collapse = "|")

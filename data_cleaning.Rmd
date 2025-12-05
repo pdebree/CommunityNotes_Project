@@ -64,8 +64,7 @@ bat_signals <- read_tsv("data/batSignals-00000.tsv")
 
 ```
 
-
-Most of our 
+We had to specify column type for the `noteId` explicitly, because we found that when we read in the ratings and notes they had different types, causing some problems when we combined these. 
 
 # Make the times interpretable.
 
@@ -236,13 +235,14 @@ Once we have our cleaned data, we can begin to think about what makes a note val
 valid_notes <- get_valid_notes(notes, notes_status_history)
 english_valid_notes <- limit_english(valid_notes)
 
+# Additional code for potential tweet note integration
 #notes_w_sourcelink <- left_join(notes, batSignals_complete, by="tweetId")
 
 ```
 
 # Ratings Read in 
 
-There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in. This is based on our time frame, though we do not limit ratings to September 2025 - we allow ratings from October 2025 on notes written in September 2025 to be part of this data set. However, because there are so many notes we limit the ratings to those that have a noteId in our valid subset. This does mean that we do not look at all of the data but, we are only looking at ratings that have a meaning in our analysis.
+There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in. This is based on our time frame, though we do not limit ratings to September 2025 - we allow ratings from October 2025 on notes written in September 2025 to be part of this data set. However, because there are so many notes we limit the ratings to those that have a `noteId` in our valid subset. This does mean that we do not look at all of the data but, we are only looking at ratings that have a meaning in our analysis.
 
 
 ```{r}
@@ -303,13 +303,24 @@ valid_notes_by_count_id <- notes_w_counts %>% filter(number_of_ratings >= 10) %>
 # ratings frame
 valid_notes <- valid_notes %>% filter(noteId %in% valid_notes_by_count_id)
 valid_ratings <- ratings_valid %>% filter(noteId %in% valid_notes_by_count_id)
+```
 
-write.csv(valid_notes_rated, "data/valid_notes.csv", row.names=FALSE)
+Let's look at some summary statistics on how many ratings there are per note.
+
+```{r}
+valid_notes_combined <- left_join(valid_notes, valid_ratings %>% group_by(noteId) %>% summarize(number_of_ratings=n()), by="noteId")
+summary(valid_notes_combined$number_of_ratings)
+```
+
+This is pretty severely right skewed. 
+
+```{r}
+write.csv(valid_notes, "data/valid_notes.csv", row.names=FALSE)
 write.csv(valid_ratings, "data/valid_ratings.csv", row.names=FALSE)
 ```
 
 
-Finally, we have 138,884 notes and 20,427356 ratings.
+Finally, we have 138,884 notes and 20,427,356 ratings.
 
 We have lost a lot of data in this process. Starting with 2,153,194 notes and ending with 138,884. A large portion of this missing data does come from notes that could not be identified as English. 
 

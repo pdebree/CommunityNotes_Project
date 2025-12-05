@@ -64,8 +64,6 @@ After looking at some of the data, we only have some columns that are helpful. U
 # Talk about why we chose which ratings parameters (could not include those that have are really reliant on the tweet, because we don't have that text)
 These are the rating attributes I have removed:helpfulAddressesClaim", "helpfulImportantContext","notHelpfulMissingKeyPoints","notHelpfulIrrelevantSources",  "notHelpfulNoteNotNeeded"
 
-
-
 The Grok API key is loaded in as a system variable. We use grok-3 because this was the most cost effective way to do our prompt engineering. 
 
 Load in model parameters for prompting: 
