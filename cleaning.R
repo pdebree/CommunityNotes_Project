@@ -76,6 +76,9 @@ remove_missing_noteId <- function(notes_data){
   return(notes_data)
 }
 
+remove_media_notes <- function(notes_data){
+  return(notes_data %>% filter(isMediaNote==0))
+}
 
 limit_dates <- function(notes){
   # assertion that month_year appears in the dataset
@@ -118,6 +121,7 @@ clean_notes <- function(notes) {
   notes <- remove_missing_notes(notes)
   notes <- remove_missing_noteId(notes)
   notes <- remove_depreciated_notes_values(notes)
+  notes <- remove_media_notes(notes)
   return(notes)
 }
 

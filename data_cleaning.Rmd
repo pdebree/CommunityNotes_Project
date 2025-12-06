@@ -136,6 +136,7 @@ The output above shows that there are only non-missing values for `harmful`, `be
 
 `clean_bat_signals()` limits the `tweetId` values to those that are 19 character long (as they should be) and makes a list of sources for each tweet. When a bat signal is sent (i.e. a user requests a community note on a tweet) they can supply a url of a website that contains information that may be relevant to a community note. As there can be multiple bat signals for a tweet, we created lists of source links. Though this is not used in this project, it may be helpful moving forward. 
 
+We also remove notes that have `isMediaNote` - meaning that the note is based on the media in the tweet - not the text. This makes these notes not useful in our analysis because our evaluations will all be text based. 
 
 ```{r}
 source("cleaning.R")
@@ -160,14 +161,14 @@ table(notes_status_history %>% filter(noteId %in% (limit_english(notes) %>% pull
 
 From all of the data 
 259194 are `CURRENTLY_RATED_HELPFUL`
-152090 are `CURRENTLY_RATED_NOT_HELPFUL`
-1902300 do not have NON-NMR status 
+152091 are `CURRENTLY_RATED_NOT_HELPFUL`
+1902309 do not have NON-NMR status 
 
 
 Then in only English: 
-134683 are `CURRENTLY_RATED_HELPFUL`
-76487 are `CURRENTLY_RATED_NOT_HELPFUL`
-1045958 do not have NON-NMR status
+117190 are `CURRENTLY_RATED_HELPFUL`
+75376 are `CURRENTLY_RATED_NOT_HELPFUL`
+993150 do not have NON-NMR status
 
 There is likely something to be said about the validity of content moderation in different languages. 
 
@@ -189,10 +190,10 @@ From all of the data
 
 
 Then in only English: 
-99019 are `CURRENTLY_RATED_HELPFUL`
-45941 are `CURRENTLY_RATED_NOT_HELPFUL`
-1039682 are `NEEDS_MORE_RATINGS`
-72486 are `NA`
+85017 are `CURRENTLY_RATED_HELPFUL`
+45348 are `CURRENTLY_RATED_NOT_HELPFUL`
+986963 are `NEEDS_MORE_RATINGS`
+68388 are `NA`
 
 It is really surprising how many NA values are here - we struggled to get an understanding from the documentation why this is. Intuitively, it seems that it would make sense for there to be some reason, or inherent coding, as to why there are so many missing values. 
 
@@ -239,6 +240,8 @@ english_valid_notes <- limit_english(valid_notes)
 #notes_w_sourcelink <- left_join(notes, batSignals_complete, by="tweetId")
 
 ```
+
+We have 127880 valid notes in english.
 
 # Ratings Read in 
 
@@ -312,6 +315,10 @@ valid_notes_combined <- left_join(valid_notes, valid_ratings %>% group_by(noteId
 summary(valid_notes_combined$number_of_ratings)
 ```
 
+
+   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   10.0    41.0    77.0   149.2   149.0 22272.0 
+   
 This is pretty severely right skewed. 
 
 ```{r}
@@ -320,7 +327,7 @@ write.csv(valid_ratings, "data/valid_ratings.csv", row.names=FALSE)
 ```
 
 
-Finally, we have 138,884 notes and 20,427,356 ratings.
+Finally, we have 124,347 notes and 18,551,817 ratings.
 
 We have lost a lot of data in this process. Starting with 2,153,194 notes and ending with 138,884. A large portion of this missing data does come from notes that could not be identified as English. 
 
