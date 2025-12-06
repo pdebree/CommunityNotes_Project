@@ -47,7 +47,7 @@ We should note, that these topics are generally applied to the tweet text as wel
 
 ```{r}
 # Only need valid notes here, ratings are not relevant to our topics. (They will be once we start modeling). 
-valid_notes <- read.csv("data/valid_notes.csv")
+valid_notes <- read_csv("data/valid_notes.csv", col_types=cols(noteId=col_character()))
 ```
 
 The functions for our topic modeling process can be found in `topic_modeling.R`. Below in the `mark_topics` function we create binary variable that indicate whether a note contains a seed term for each of the four topics. We will use this to check how well our topic model does at highlighting notes that should be within a group.
@@ -55,68 +55,31 @@ The functions for our topic modeling process can be found in `topic_modeling.R`.
 ```{r}
 source("topic_modeling.R")
 
-
 # add seed term markers to our valid notes 
-topic_valid_notes <- mark_topics(valid_notes)
+valid_notes <- mark_topics(valid_notes)
 topic_names <- c("ukraine_conflict", "gaza_conflict", "messi_ronaldo", "scams") 
 
 # Checking how many of each topic are seen by the values 
-colSums(topic_valid_notes[topic_names])
+colSums(valid_notes[topic_names])
 ```
 
 The seed topics appear in the following number of notes: 
-- `UkraineConflict` - 4920
-- `GazaConflict` - 6933
-- `MessiRonaldo` - 471
-- `Scams` - 16240
+- `UkraineConflict` - 4319 
+- `GazaConflict` - 6349
+- `MessiRonaldo` - 453
+- `Scams` - 6575
             
             
 ```{r}
 # We can limit our data set to only those that include the seed terms (in an earlier phase we did this to see how well the topic modeling would perform with - ideally - very strict groups.)
-topic_only_valid <- limit_to_four_topics(topic_valid_notes)
-gaza_ukraine_valid <- limit_gaza_ukraine(topic_valid_notes)
+topic_only_valid <- limit_to_four_topics(valid_notes)
+gaza_ukraine_valid <- limit_gaza_ukraine(valid_notes)
 
 #write.csv(gaza_ukraine_valid, "data/gaza_ukraine_notes.csv", row.names=FALSE)
 ```
 
 This is a really rough way of getting the data - we could use these seed terms to make more nuanced topic modeling. For our analysis we believe that finding a small subset is enough (especially given the constraint on our data). 
 
-
-# Latent Dirichlet Allocation
-[Add in proper reference: https://ai.stanford.edu/~ang/papers/nips01-lda.pdf]
-
-We tried two methods for doing our topic modeling. Firstly we looked at 
-
-```{r}
-# notes_text <- gaza_ukraine_valid[["note_text"]]
-# corpus <- VCorpus(VectorSource(notes_text))
-# 
-# # preprocessing for tm values
-# corpus <- tm_map(corpus, content_transformer(tolower)) 
-# corpus <- tm_map(corpus, removePunctuation)
-# corpus <- tm_map(corpus, removeNumbers)
-# corpus <- tm_map(corpus, removeWords, stopwords("english")) 
-# 
-# 
-# dtm <- DocumentTermMatrix(corpus)
-# dtm <- removeSparseTerms(dtm, sparse = 0.99) # this is especially a problem because we will lose URLS 
-# 
-# # totals for each row 
-# rowTotals <- apply(dtm, 1, sum)
-# 
-# dtm_matrix <- as.matrix(dtm)
-# dtm_matrix <- dtm_matrix[rowTotals > 0, ]
-# head(dtm_matrix)
-# 
-# k_topics <- 2
-# lda_model <- LDA(dtm_matrix, k = k_topics, control = list(seed = 123))
-# 
-# print(lda_model)
-
-```
-
-
-# Add in Classification Task here to prove that it does not work as well as with seed terms because of the overlap in language between conflicts. 
 
 # KeyATM 
 [https://keyatm.github.io/keyATM/index.html] - Add proper reference. Write this up properly. 
@@ -128,13 +91,17 @@ KeyATM is very integrated with the `quanteda` package - which we will use to hel
 Below we create the list of notes text (order here will be very important). 
 
 ```{r}
-custom_stopwords <- c("quote", "video", "account", "accounts", "post", "claim", "use", "quotes", "image")
 
 # Pull out the full vector of notes for all of our valid English tweets ()
 full_notes_text <- valid_notes[["note_text"]]
 
-# Create tokens  - could look at making sub-words?
-data_tokens <- quanteda::tokens(
+text_preprocessing <- function(notes_text) {
+  
+  custom_stopwords <- c(
+    "quote", "video", "account", "accounts", "post", "claim", "use", "quotes", "image")
+  
+  # Create tokens  - could look at making sub-words?
+  data_tokens <- quanteda::tokens(
   full_notes_text,
   # Preprocessing Steps 
   remove_numbers = TRUE,
@@ -158,81 +125,86 @@ data_tokens <- quanteda::tokens(
   ) %>% 
   # removes tokens of length 2 or less
   tokens_select(min_nchar = 3) 
+
+  # word_counts_vector <- colSums(data_dfm)
+  # head(sort(word_counts_vector, decreasing = TRUE), 200)
+  
+  data_dfm <- dfm(data_tokens) %>%
+    # min_termfreq - removes features that appear less than five times across all documents 
+    # min_docfreq - removes features that appear in less than 2 distinct documents. 
+    # get 4200 from looking at the data. 
+    dfm_trim(min_termfreq = 5, min_docfreq = 2, max_termfreq = 3000)
+  
+  # find indices for rows that are not empty
+  logical_empty <- unname(rowSums(data_dfm) > 0)
+  
+  
+  # Subset dfm to only include those that do not have empty rows. 
+  data_dfm_filtered <- dfm_subset(
+      data_dfm,
+      logical_empty
+  )
+
+  docs <- keyATM_read(
+  texts = data_dfm_filtered)
+
+  output <- list(docs=docs, logical_empty=logical_empty)
+  return(output)
+
+}
+
+# Preprocess docs to prepare for topic modeling.
+preprocessed_docs <- text_preprocessing(full_notes_text)
 ```
 
 Once we have a list of tokens, we can then create our Document Term Frequency Matrix, using `quanteda::dfm`. We pass our data tokens to this function and remove terms that appear less than 5 times across all documents and those that appear in less than 2 distinct documents.
-
-Then we must remove the documents that have empty rows (meaning no appearances in the selected features).
-
-```{r}
-word_counts_vector <- colSums(data_dfm)
-head(sort(word_counts_vector, decreasing = TRUE), 200)
-
-data_dfm <- dfm(data_tokens) %>%
-  # min_termfreq - removes features that appear less than five times across all documents 
-  # min_docfreq - removes features that appear in less than 2 distinct documents. 
-  # get 4200 from looking at the data. 
-  dfm_trim(min_termfreq = 5, min_docfreq = 2, max_termfreq = 3000)
-
-# find indices for rows that are not empty
-logical_empty <- unname(rowSums(data_dfm) > 0)
-non_empty_doc_indices <- which(unname(rowSums(data_dfm) > 0))
-
-# Subset dfm to only include those that do not have empty rows. 
-data_dfm_filtered <- dfm_subset(
-    data_dfm,
-    logical_empty
-)
-```
 
 Filtering takes us from 138894 to 138473 rows. 
 
 Below we do some visualization of the words. We do this for all the seed terms as well as just the conflict topics. 
 
 ```{r}
-# Assign Key Words
-keywords <- list(
-  Ukraine = Topics.UkraineConflict,
-  Gaza = Topics.GazaConflict,
-  Messi = Topics.MessiRonaldo,
-  Scams = Topics.Scams
-)
-keywords_gzuk <- list(
-  Ukraine = Topics.UkraineConflict,
-  Gaza = Topics.GazaConflict
-)
-
 # We visualize the keyword frequency 
-key_viz <- visualize_keywords(docs = keyATM_docs, keywords = keywords)
+key_viz <- visualize_keywords(docs = preprocessed_docs$docs, keywords = keywords)
 key_viz
 
 # We can also visualize the keyword frequency for just the conflict topics
-key_viz_gzuk <- visualize_keywords(docs = keyATM_docs, keywords = keywords_gzuk)
+key_viz_gzuk <- visualize_keywords(docs = preprocessed_docs$docs, keywords = keywords_gzuk)
 key_viz_gzuk 
 
 # Visualize the words frequency. 
 values_fig(key_viz)
 ```
 
+# A tibble: 16 × 5
+# Groups:   Topic [4]
+   Word      WordCount `Proportion(%)` Ranking Topic    
+   <chr>         <int>           <dbl>   <int> <fct>    
+ 1 ukrain         1915           0.14        1 1_Ukraine
+ 2 russia         1609           0.117       2 1_Ukraine
+ 3 putin           403           0.029       3 1_Ukraine
+ 4 moscow          113           0.008       4 1_Ukraine
+ 5 kyiv            101           0.007       5 1_Ukraine
+ 6 kiev             41           0.003       6 1_Ukraine
+ 7 israel         2614           0.191       1 2_Gaza   
+ 8 gaza           1264           0.092       2 2_Gaza   
+ 9 hama           1191           0.087       3 2_Gaza   
+10 palestin        643           0.047       4 2_Gaza   
+11 jerusalem        98           0.007       5 2_Gaza   
+12 messi           242           0.018       1 3_Messi  
+13 ronaldo         222           0.016       2 3_Messi  
+14 term           2604           0.19        1 4_Scams  
+15 farm           1980           0.144       2 4_Scams  
+16 dropship       1161           0.085       3 4_Scams  
+
+
 Ready text for modeling with keyATM_read (creates a keyATM_docs object). 
-
-```{r}
-# set the seed before split the dfm - for ease of comparison. 
-set.seed(225) 
-
-# Create a keyATM_docs object.
-# we include the split=0.3 because this holds out 30% of the data for cross validation 
-# after fitting the main model. A slight concern here is the sparsity of the dfm
-docs_withSplit <- keyATM_read(
-  texts = data_dfm_filtered,
-)
-```
 
 We compare the keyATM with a weightedLDA to see how much adding the keywords improves our topics discrepancies. Looking at the weightedLDA output also let's us see which words appear across the 
 
 ```{r}
 out_lda <- weightedLDA(
-  docs              = docs_withSplit, 
+  docs              = preprocessed_docs$docs, 
   number_of_topics  = 10, # We do 10 to match the logic below
   model             = "base",
   options           = list(seed = 250)
@@ -265,7 +237,7 @@ Now let's look at keyATM to do Topic Modeling with Seed Terms.
 
 ```{r}
 out_keyATM <- keyATM(
-  docs              = docs_withSplit, 
+  docs              = preprocessed_docs$docs, 
   no_keyword_topics = 10, # 4 plus 6 extra to account for differences in text data. 
   keywords          = keywords, # selected keywords
   model             = "base", # select the model
@@ -275,32 +247,30 @@ out_keyATM <- keyATM(
 top_words(out_keyATM)
 ```
 
-    1_Ukraine       2_Gaza 3_Messi      4_Scams Other_1  Other_2 Other_3 Other_4   Other_5
-1  ukrain [✓]   israel [✓]    goal dropship [✓]   digit contrail generat   creat     tesla
-2  russia [✓]     gaza [✓]   leagu     platform   satir    creat   satir   digit    @tesla
-3     russian         isra    play     term [✓]    site    satir    call  presid     steal
-4         war     hama [✓]   first        stake    page    water    caus generat    verifi
-5     countri       attack  player     advertis  releas    digit     due     new     asset
-6   ukrainian  palestinian     won   aliexpress confirm   differ    anim  provid @elonmusk
-7      presid         kill  season        unfit  provid  confirm  differ     it’   compani
-8    militari          war     man       outlet    anim      new   creat    call      warn
-9      attack palestin [✓]   digit  counterfeit     new     clip  appear   first      elon
-10       forc      support     new         lack   creat     call     it’   elect     repli
+ 1_Ukraine      2_Gaza 3_Messi      4_Scams Other_1  Other_2  Other_3  Other_4 Other_5 Other_6 Other_7 Other_8
+1  ukrain [✓]  israel [✓]    game        gambl    musk    water   vaccin     musk opinion     tax   20the     law
+2  russia [✓]    gaza [✓]   leagu    undisclos   steal     game     caus    steal   alter   still    text  presid
+3     russian    hama [✓]    goal     term [✓]   asset    creat   cancer   verifi    musk current    work opinion
+4         war        isra  player     advertis  @tesla      see    studi imperson   satir    sinc     new   charg
+5     countri      attack  season       polici  verifi     caus    human   public    news  vaccin    20of    vote
+6      presid palestinian    play        stake  public   differ     anim    asset    elon  provid    vote   court
+7   ukrainian        kill     won      product   tesla contrail    water   @tesla  pictur     new    game    case
+8    militari         war   score     platform  crypto  generat   health     warn generat confirm opinion   offic
+9      attack         jew   first dropship [✓] compani      new scientif     elon   digit opinion current current
+10     govern     support   alter       websit scammer  opinion     mani  compani    call    news  public     man
+   Other_9 Other_10
+1   pictur imperson
+2     game   letter
+3      day     fool
+4  confirm  misread
+5   releas  opinion
+6      see      it’
+7     fire    alter
+8    first     news
+9      new    satir
+10     it’   presid
 
-    Other_6 Other_7  Other_8 Other_9 Other_10
-1    vaccin    caus imperson   20the imperson
-2    cancer   first    steal    caus     tate
-3  imperson  differ   verifi    text   andrew
-4      caus  appear   @tesla  vaccin     warn
-5    letter    mani    asset    20of    tesla
-6     studi   water   letter    20in    steal
-7      fool   found     fool    20to    repli
-8   misread     new   wallet   20and     elon
-9   opinion     due  misread  differ   letter
-10    human generat   crypto   still   verifi
-
-The output shows that there are fairly good groups for our selected seed topics (Can talk more about this)
-
+The output shows that there are fairly good groups for our selected seed topics.
 
 ```{r}
 fig_modelfit <- plot_modelfit(out_keyATM)
@@ -310,49 +280,78 @@ fig_modelfit
 
 Now we can assign these topics to our original model 
 ```{r}
-# pull out the proportions of appearance in each topic group (out of the 10)
-theta_matrix <- out_keyATM$theta
 
-# Find the column in which the highest likelihood topic appears. 
-highest_prop_topic <- apply(theta_matrix, 1, which.max)
+assign_topics <- function(notes_frame, keyATM_output, non_empty_logical) {
+  
+  
+  # pull out the proportions of appearance in each topic group (out of the 10)
+  theta_matrix <- keyATM_output$theta
+  
+  # Find the column in which the highest likelihood topic appears. 
+  highest_prop_topic <- apply(theta_matrix, 1, which.max)
+  
+  # pull out topic names (this let's us see our seed topics)
+  topic_labels <- colnames(theta_matrix)
+  
+  # assign indices only to documents that were used in the topic modeling 
+  # remember we omitted some!
+  assigned_topics_name_filtered <- topic_labels[highest_prop_topic]
+  
+  
+  non_empty_doc_indices <- which(non_empty_logical)
 
-# pull out topic names (this let's us see our seed topics)
-topic_labels <- colnames(theta_matrix)
+  # create column of NA values 
+  notes_frame$keyATM_topic <- NA
+  
+  # Assign the topic group the documents (based on their indices)
+  notes_frame[non_empty_doc_indices, "keyATM_topic"] <- assigned_topics_name_filtered
+  
+  return(notes_frame)
+}
 
-# assign indices only to documents that were used in the topic modeling 
-# remember we omitted some!
-assigned_topics_name_filtered <- topic_labels[highest_prop_topic]
+
+topic_notes_valid <- assign_topics(
+  notes_frame = valid_notes, keyATM_output = out_keyATM, non_empty_logical = preprocessed_docs$logical_empty) 
+
+# only keep interpretability for seed topics. 
+topic_notes_valid <- topic_notes_valid %>% mutate(
+  topic=ifelse(keyATM_topic %in% c("1_Ukraine", "2_Gaza", "3_Messi", "4_Scams"), keyATM_topic, "unassigned"))
+  
+table(topic_notes_valid$topic)
 ```
 
 
-```{r}
-# create column of NA values 
-topic_valid_notes$keyATM_topic <- NA
-
-# Assign the topic group the documents (based on their indices)
-topic_valid_notes[non_empty_doc_indices, "keyATM_topic"] <- assigned_topics_name_filtered
-
-```
+ 1_Ukraine     2_Gaza    3_Messi    4_Scams unassigned 
+     10581      13295       8904       7949      83618 
 
 
 Now it is useful to check whether the notes that have been assigned based on just the seed terms end up in the right groups. Of course this is a fairly rough test but we can get some intuition on whether the seed terms track well to the ultimate topic groups. 
 
 ```{r}
-print(topic_valid_notes %>% filter(ukraine_conflict) %>% summarize(ukraine_assigned = sum(keyATM_topic == "1_Ukraine", na.rm = TRUE)/n()))
-print(topic_valid_notes %>% filter(gaza_conflict) %>% summarize(gaza_assigned = sum(keyATM_topic == "2_Gaza", na.rm = TRUE)/n()))
-print(topic_valid_notes %>% filter(messi_ronaldo) %>% summarize(messi_assigned = sum(keyATM_topic == "3_Messi", na.rm = TRUE)/n()))
-print(topic_valid_notes %>% filter(scams) %>% summarize(scams_assigned = sum(keyATM_topic == "4_Scams", na.rm = TRUE)/n()))
+print(topic_notes_valid %>% filter(ukraine_conflict) %>% summarize(ukraine_assigned = sum(topic == "1_Ukraine", na.rm = TRUE)/n()))
+print(topic_notes_valid %>% filter(gaza_conflict) %>% summarize(gaza_assigned = sum(topic == "2_Gaza", na.rm = TRUE)/n()))
+print(topic_notes_valid %>% filter(messi_ronaldo) %>% summarize(messi_assigned = sum(topic == "3_Messi", na.rm = TRUE)/n()))
+print(topic_notes_valid %>% filter(scams) %>% summarize(scams_assigned = sum(topic == "4_Scams", na.rm = TRUE)/n()))
 ```
+uk - 0.719, gz - 0.732, mr -  0.819, scams - 0.468
+
 
 We'll check if this problem is coming from the NA values (in other words documents that did not have enough nuance for our topic modeling)
 
 ```{r}
-print(topic_valid_notes %>% filter(ukraine_conflict) %>% summarize(num_na = sum(is.na(keyATM_topic))))
-print(topic_valid_notes %>% filter(gaza_conflict) %>% summarize(num_na = sum(is.na(keyATM_topic))))
-print(topic_valid_notes %>% filter(messi_ronaldo) %>% summarize(num_na = sum(is.na(keyATM_topic))))
-print(topic_valid_notes %>% filter(scams) %>% summarize(num_na = sum(is.na(keyATM_topic))))
+print(topic_notes_valid %>% filter(ukraine_conflict) %>% summarize(num_na = sum(is.na(keyATM_topic))))
+print(topic_notes_valid %>% filter(gaza_conflict) %>% summarize(num_na = sum(is.na(keyATM_topic))))
+print(topic_notes_valid %>% filter(messi_ronaldo) %>% summarize(num_na = sum(is.na(keyATM_topic))))
+print(topic_notes_valid %>% filter(scams) %>% summarize(num_na = sum(is.na(keyATM_topic))))
 ```
 
+19 - 26 - 1 - 4 
 
 It does not come from this, which is interesting. We'll save this updated dataset, so that we can used the topic allocation later 
+
+Justification for only Gaza and Ukraine
+
+```{r}
+write.csv(topic_notes_valid, "data/topic_valid_notes.csv", row.names = FALSE)
+```
 
