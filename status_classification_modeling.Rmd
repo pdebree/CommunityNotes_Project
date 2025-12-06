@@ -1,0 +1,70 @@
+---
+title: "status_classification_modeling.Rmd"
+output: html_document
+date: "2025-12-05"
+---
+
+```{r}
+library(tidyverse)
+
+source("classification.R")
+```
+
+
+
+Read in the valid notes data, with topic markers, the ratings data and the generated LLM outputs
+
+```{r}
+notes <- read_csv("data/topic_valid_notes.csv", col_types=cols(noteId=col_character()))
+ratings <- read_csv("data/valid_ratings.csv", col_types=cols(noteId=col_character()))
+grok_outputs <- read_csv("data/valid_grok_ratings.csv", col_types=cols(note_id=col_character())) %>% rename(noteId=note_id)
+```
+
+
+Ratings include our topic markers - so we'll mark the notes that have grok outputs 
+
+```{r}
+notes <- notes %>% mutate(has_grok_output = (noteId %in% (grok_outputs %>% pull(noteId)))) 
+
+
+print(notes %>% filter(has_grok_output, (keyATM_topic == "1_Ukraine"))) 
+print(notes %>% filter(has_grok_output, (keyATM_topic == "2_Gaza"))) 
+
+```
+
+
+
+We have 965 LLM notes that were assigned to our two conflict topics (Gaza and Ukraine). 
+
+
+We can consider a few different ways of using the range of ratings for each individual note. Within X's Algorithm this is done using Bridge Based Matrix Factorization. This is somewhat beyond the scope of our project - though we would have loved to use it in comparing the LLM outputs. 
+
+Our rough solution to having multiple ratings for one ground truth (whether or not the `lockedStatus` is marked as `CURRENTLY_RATED_HELPFUL` or `CURRENTLY_RATED_NOT_HELPFUL`). Is to take the mean of the ratings metrics (e.g. `notHelpfulOpinionSpeculation`). 
+
+```{r}
+grok <- ready_grok(grok_outputs)
+rated_notes <- ready_human_notes_ratings(notes=notes, ratings=ratings)
+```
+
+
+Though we have the notes metadata (i.e. what the note writer thinks of the tweet) this should be not considered directly as predicting locked status. Our hope more with including these is to give the models an understanding of consensus between note makers and note raters. 
+
+We end up with only binary variables from the note data. 
+
+Actually having the ratings be means and the LLM output let's us think about the nuance of opinion that a range of raters let's us have. 
+
+
+We'll start with a very simple model to check that helpfulness tracks to a positive `LockedStatus`. 
+
+```{r}
+base_model <- glm(data=rated_notes, locked_helpful ~ helpfulnessScore, family="binomial")
+
+```
+
+
+
+
+
+
+
+
