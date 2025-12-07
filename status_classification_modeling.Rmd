@@ -30,6 +30,7 @@ setdiff(notes[["noteId"]], ratings[["noteId"]])
 Ratings include our topic markers - so we'll mark the notes that have grok outputs 
 
 ```{r}
+# mark notes that have a corresponding grok output
 notes <- notes %>% mutate(has_grok_output = (noteId %in% (grok_output %>% pull(noteId)))) 
 
 print(notes %>% filter(has_grok_output, (topic=="1_Ukraine"))) 
@@ -44,8 +45,10 @@ We can consider a few different ways of using the range of ratings for each indi
 Our rough solution to having multiple ratings for one ground truth (whether or not the `lockedStatus` is marked as `CURRENTLY_RATED_HELPFUL` or `CURRENTLY_RATED_NOT_HELPFUL`). Is to take the mean of the ratings metrics (e.g. `notHelpfulOpinionSpeculation`). 
 
 ```{r}
-grok_clean <- ready_grok(grok_output)
-rated_notes <- ready_human_notes_ratings(notes=notes, ratings=ratings)
+grok_output_clean <- ready_grok(grok_output, notes=notes)
+rated_notes <- ready_human_notes_ratings(notes=notes, ratings=ratings) 
+# version of the data frame where all the mean ratings were binarized.
+rated_notes_binned <- rated_notes %>% mutate(across(all_of(rating_vars[-length(rating_vr)]),.fns = ~ as.numeric(. >= 0.5)))
 ```
 
 
@@ -61,15 +64,16 @@ Actually having the ratings be means and the LLM output let's us think about the
 We'll start with a very simple model to check that helpfulness tracks to a positive `LockedStatus`. 
 
 ```{r}
+# check how effective helpfulness is at predicting lockedStatus 
 base_model <- glm(data=rated_notes, locked_helpful ~ helpfulnessScore, family="binomial")
 summary(base_model)
 ```
 
 
 ```{r}
-modeling_data <- get_llm_note_ids(grok_output, rated_notes)
+modeling_data <- get_llm_note_ids(grok_output, rated_notes_binned)
 non_grok_rated_notes <- modeling_data$non_grok_rated_notes
-grok_rated_notes <- modeling_data$grok_rated_notes
+human_rated_notes_corr_grok <- modeling_data$grok_rated_notes
   
 
 fit_log_rf <- function(notes_data){
@@ -82,7 +86,7 @@ fit_log_rf <- function(notes_data){
   smp_size <- floor(train_ratio * nrow(notes_data))
   
   train_indices <- sample(seq_len(nrow(notes_data)), size = smp_size)
-  
+
   train <- notes_data[train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars)) 
   test <- notes_data[-train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars))
 
@@ -97,12 +101,12 @@ fit_log_rf <- function(notes_data){
   # random forest
   fit.rf <- ranger(locked_helpful ~ .,
                    data = train, 
-                   num.trees = 1000, 
+                   num.trees = 50,
                    respect.unordered.factors = TRUE, 
                    probability = TRUE)
   
   rf_pred <- predict(fit.rf, data = test, type="response")
-  rf_predictions <- rf_pred$predictions[,2]
+  rf_predictions <- rf_pred$predictions[,1]
   
   rocr_prediction_test <- ROCR::prediction(rf_predictions, outcomes)
   auc_rf <- c(performance(rocr_prediction_test, "auc")@y.values[[1]])
@@ -116,14 +120,43 @@ fit_log_rf <- function(notes_data){
 }
 
 model_outputs <- fit_log_rf(non_grok_rated_notes)
+```
 
+
+```{r}
+grok_output_clean_labs <- left_join(grok_output_clean, human_rated_notes_corr_grok %>% dplyr::select(noteId, locked_helpful), by="noteId")
+
+logistic_predictions_grok <- predict(model_outputs$log_model, newdata = grok_output_clean_labs, type = "response")
+rocr_prediction_test_grok <- ROCR::prediction(logistic_predictions_grok, grok_output_clean_labs$locked_helpful)
+auc_logistic_grok <- c(performance(rocr_prediction_test_grok, "auc")@y.values[[1]])
+
+
+logistic_predictions_humangrok <- predict(model_outputs$log_model, newdata = human_rated_notes_corr_grok, type = "response")
+rocr_prediction_test_humangrok <- ROCR::prediction(logistic_predictions_humangrok, human_rated_notes_corr_grok$locked_helpful)
+auc_logistic_humangrok <- c(performance(rocr_prediction_test_humangrok, "auc")@y.values[[1]])
+
+
+rf_pred_grok <- predict(model_outputs$rf_model, data = grok_output_clean_labs, type="response")
+rf_predictions_grok  <- rf_pred_grok $predictions[,1]
+
+rocr_prediction_test_grok <- ROCR::prediction(rf_predictions_grok, grok_output_clean_labs$locked_helpful)
+auc_rf_grok <- c(performance(rocr_prediction_test_grok, "auc")@y.values[[1]])
+
+
+
+rf_pred_humangrok <- predict(model_outputs$rf_model, data = human_rated_notes_corr_grok, type="response")
+rf_predictions_humangrok  <- rf_pred_humangrok$predictions[,1]
+
+rocr_prediction_test_humangrok <- ROCR::prediction(rf_predictions_humangrok, human_rated_notes_corr_grok$locked_helpful)
+auc_rf_humangrok <- c(performance(rocr_prediction_test_humangrok, "auc")@y.values[[1]])
 
 
 ```
 
+
 As the model performs so well on all topics, there are likely better strategies to compare the LLM outputs to the human rated outputs. Below we will look at the average difference between the every. We'll do this with the meaned ratings as well as with the meaned ratings binarized. 
 
-Essentially for every rating type we will find the difference between the LLM ratings and the human rating, sum this for the whole row (so we have a total differnce). 
+Essentially for every rating type we will find the difference between the LLM ratings and the human rating, sum this for the whole row (so we have a total difference). 
 
 As a note, though the ratings data is tree structured, we will include all variables. 
 
@@ -137,20 +170,34 @@ helpfulness_names <- names(combined_ratings) %>%
   gsub("\\.human$", "", .)
 
 
-rating_diffs <- combined_ratings %>%
+find_diffs <- function(ratings_frame_combined){
+  
+  rating_diffs <- ratings_frame_combined %>%
   # get values that start with the base names
-  dplyr::select(starts_with(base_names), noteId) %>% 
+  dplyr::select(starts_with(helpfulness_names), noteId, topic) %>% 
   # 
   mutate(across(
-    .cols = all_of(paste0(base_names, ".human")), 
+    .cols = all_of(paste0(helpfulness_names, ".human")), 
     .fns = ~ . - get(gsub("\\.human$", ".grok", cur_column())), 
     .names = "diff.{gsub('.human$', '', col)}" 
   ),
   sum_o_squares = rowSums(across(all_of(starts_with("diff")), ~ .^2))) %>% 
   
   # Select only the newly created difference columns
-  dplyr::select(starts_with("diff."), noteId, sum_o_squares)
+  dplyr::select(starts_with("diff."), noteId, sum_o_squares, topic)
+  
+  return(rating_diffs)
 
+}
+
+non_bin_diffs <- find_diffs(combined_ratings)
+non_bin_diffs %>% group_by(topic) %>% summarize(mean_eval_score=mean(sum_o_squares))
+
+binned_combined_ratings <- combined_ratings %>% mutate(across(all_of(paste0(helpfulness_names, ".human")),.fns = ~ as.numeric(. >= 0.5)))
+
+bin_diffs <- find_diffs(binned_combined_ratings)
+
+bin_diffs %>% group_by(topic) %>% summarize(mean_eval_score=mean(sum_o_squares))
 ```
 
 

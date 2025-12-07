@@ -54,7 +54,7 @@ ready_human_notes_ratings <- function(notes, ratings) {
   return(rated_notes)
 }
 
-ready_grok <- function(llm_ratings){
+ready_grok <- function(llm_ratings, notes){
   llm_ratings_output <- llm_ratings %>% 
     # Turn logical values into numerics
     mutate(across(where(is.logical), as.integer), 
@@ -63,7 +63,11 @@ ready_grok <- function(llm_ratings){
              helpfulnessLevel_somewhathelpful == 1 ~ 0.5, 
              TRUE ~ 0 
            )) %>% dplyr::select(-helpfulnessLevel_helpful, - helpfulnessLevel_somewhathelpful, - helpfulnessLevel_nothelpful)
-  return(llm_ratings_output)
+  
+    # add in Trustworthy Source variable 
+  llm_ratings_output_joined <- left_join(llm_ratings_output, notes %>% dplyr::select(noteId, trustworthySources), by="noteId", )
+  
+  return(llm_ratings_output_joined)
 }
 
 
