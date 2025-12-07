@@ -1,5 +1,18 @@
 # Modeling Status 
 
+
+note_vars <- c("misleadingOther", "misleadingFactualError", "misleadingManipulatedMedia", 
+               "misleadingOutdatedInformation", "misleadingMissingImportantContext", 
+               "misleadingUnverifiedClaimAsFact", "misleadingSatire", "notMisleadingOther",               
+               "notMisleadingFactuallyCorrect", "notMisleadingOutdatedButNotWhenWritten", 
+               "notMisleadingClearlySatire", "notMisleadingPersonalOpinion", "trustworthySources", 
+               "isMediaNote") #, "misinformed_or_misleading")              
+
+rating_vars <- c("helpfulClear", "helpfulGoodSources", "helpfulUnbiasedLanguage", "notHelpfulIncorrect", 
+                 "notHelpfulSourcesMissingOrUnreliable", "notHelpfulHardToUnderstand", 
+                 "notHelpfulArgumentativeOrBiased", "notHelpfulSpamHarassmentOrAbuse", 
+                 "notHelpfulOpinionSpeculation", "helpfulnessScore")
+
 # Note: we could make better predictions for output with this data. We could find, for example, a metric of inflamatory language, using NLP methods but that is not the aim her. The aim is to compare classification outputs based only on the notes and ratings information. There is likely a large advantage in using LLMs because they may inherently capture this. 
 
 ready_human_notes_ratings <- function(notes, ratings) {
@@ -52,3 +65,18 @@ ready_grok <- function(llm_ratings){
            )) %>% dplyr::select(-helpfulnessLevel_helpful, - helpfulnessLevel_somewhathelpful, - helpfulnessLevel_nothelpful)
   return(llm_ratings_output)
 }
+
+
+get_llm_note_ids <- function(grok_outputs, rated_notes) {
+  # We are going to save all notes that were rated by grok (and randomly selected) to be 
+  # in our test set. (There will still be ukraine values in the training set.)
+  # The subset is small enough that we feel that the ukraine and gaza notees are still 
+  # represented fairly proportionatley in the ratining and test sets generally. 
+
+  
+  output <- list(non_grok_rated_notes =rated_notes %>% filter(!(noteId %in% grok_outputs[["noteId"]])),
+                   grok_rated_notes=rated_notes %>% filter(noteId %in% grok_outputs[["noteId"]]))
+  return(output)
+}
+
+

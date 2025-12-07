@@ -12,6 +12,8 @@ library(httr2)
 library(jsonlite)
 library(usethis)
 library(data.table)
+library(tidyverse)
+library(stringr)
 # R script with prompting functions
 source("grok_notes_prompting.R")
 ```
@@ -22,41 +24,48 @@ We use the valid notes generated from our data cleaning process (found in `data_
 
 ```{r}
 # Read in Valid English Notes (by our previous definition fo what makes a note good)
-notes_valid_in <- read.csv("data/valid_community_notes.csv")
-gaza_ukraine_notes <- read.csv("data/gaza_ukraine_notes.csv")
-
+notes_valid_in <- read_csv("data/topic_valid_notes.csv", col_types=cols(noteId=col_character()))
 ```
 
-Below we create batches of data, group by 200, for API calls. Before doing this we shuffled all of the relevant Gaza and Ukraine data, so that any amount that we generated notes for would be a representative sample of the Gaza and Ukraine data. 
+We - based on the topic modeling - get llm outputs for the notes from the Gaza and Ukraine sets. 
+
+
+```{r}
+gzuk_notes <- notes_valid_in %>% filter(topic == "1_Ukraine" | topic == "2_Gaza")
+```
+
+
+We have 23876 notes. However, we want to keep a large portion of these in our training and test set. So we will aim for about 1000 notes. 
+
+Below we create batches of data, group by 10, for API calls. Before doing this we shuffled all of the relevant Gaza and Ukraine data, so that any amount that we generated notes for would be a representative sample of the Gaza and Ukraine data. 
 
 ```{r}
 # Make into a table and shuffle (to randomize)
 # We randomized in order to make sure that if we did not get all the ratings from the llm, the ones we did are good enough 
-gaza_ukraine_notes <- as.data.table(gaza_ukraine_notes) 
-gaza_ukraine_notes <- gaza_ukraine_notes[sample(.N)]
-
+gzuk_notes <- as.data.table(gaza_ukraine_notes) 
+gzuk_notes <- gzuk_notes[sample(1000)]
 
 # pull out the note text from the subgroups 
-get_notes <- function(notes_data_valid) {
-  return(notes_data_valid[["note_text"]])
+get_notes <- function(notes_data) {
+  return(notes_data[["note_text"]])
 }
 
-gaza_ukraine_text <- get_notes(gaza_ukraine_notes)
-group_size <- 200
+gzuk_text <- get_notes(gzuk_notes)
+group_size <- 10
 
-# make groups of size 200 to prompt grok with. 
+# make groups of size 10 to prompt grok with. 
 group_texts <- gl(
   n = ceiling(length(gaza_ukraine_text) / group_size), 
   k = group_size, 
   length = length(gaza_ukraine_text)
 )
 
-gaza_ukraine_texts_split <- split(gaza_ukraine_text, group_texts)
-
+# We will just use the first 10 groups of 200 
+gzuk_texts_split <- split(gaza_ukraine_text, group_texts)
+gzuk_ids_split <- split(gzuk_notes$noteId, group_texts)
 ```
 
 # Make attributes ready:
-
 
 After looking at some of the data, we only have some columns that are helpful. Ultimately, we are most focused on the helpfulnessLevel attributes - but since we are limited by not having the tweet data it is helpful to have more nuanced inputs.
 
@@ -77,8 +86,8 @@ system_prompt <- paste(
   "**CRITICAL CONSTRAINT:** You must set **exactly one** of the three helpfulness level fields (`helpfulnessLevel_helpful`, `helpfulnessLevel_somewhathelpful`, or `helpfulnessLevel_nothelpful`) to `TRUE, and the other two to `FALSE`.",
   "**CRITICAL CONSTRAINT:** For the other 9 fields, set them to `TRUE` if the characteristic applies to the note, and `FALSE` if it does not. The must be named exactly as follows: `helpfulClear`, `helpfulGoodSources`, `helpfulUnbiasedLanguage`, `notHelpfulIncorrect`,`notHelpfulSourcesMissingOrUnreliable`, `notHelpfulHardToUnderstand`, `notHelpfulArgumentativeOrBiased`, `notHelpfulSpamHarassmentOrAbuse`, `notHelpfulOpinionSpeculation",
   "---",
-  "**CRITICAL CONSTRAINT:** Your response MUST be a JSON object that strictly adheres to the provided JSON Schema. The key values of the JSON Schema for every note MUST be the same as the JSON schema input. Do not include any text, reasoning, or formatting outside of the JSON object. There must be 200 outputs")
-
+  "**CRITICAL CONSTRAINT:** Your response MUST be a JSON object that strictly adheres to the provided JSON Schema. The key values of the JSON Schema for every note MUST be the same as the JSON schema input. Do not include any text, reasoning, or formatting outside of the JSON object. There must be 50 outputs, do NOT nest the 12 fields within each note. The JSON format must not have any nesting at all and should be easy to convert to a data frame.
+  e.g. \"note1_helpfulnessLevel_helpful\": true,\n  \"note1_helpfulnessLevel_somewhathelpful\": false,\n  \"note1_helpfulnessLevel_nothelpful\": false,\n  \"note1_helpfulClear\": true,\n  \"note1_helpfulGoodSources\": true,\n  \"note1_helpfulUnbiasedLanguage\": true,\n  \"note1_notHelpfulIncorrect\": false,\n  \"note1_notHelpfulSourcesMissingOrUnreliable\": false,\n  \"note1_notHelpfulHardToUnderstand\": false,\n  \"note1_notHelpfulArgumentativeOrBiased\": false,\n  \"note1_notHelpfulSpamHarassmentOrAbuse\": false,\n  \"note1_notHelpfulOpinionSpeculation\": false,\n\n")
 ```
 
 We had to iterate over quite a few versions of this system prompt before we got to a point that we were happy with. This was an unexpectedly large amount of effort and took us quite a while to figure out. There are probably upwards of 10 versions that we tried, and then once we tried we had to see how well the prompt scaled up. This was another issue. 
@@ -88,22 +97,21 @@ User prompt looks like this:
 "**TEXT:** ", text, "\n\n",
 "Generate the structured rating in the required format."))}
 
-
 # Create the Ratings 
 
 The code for the actual api calls can be found in `grok_notes_prompting.R` but below we perform the batched api calls. We decided to do this here and not in the script because processing the generated data required quite a bit of effort and manual adjustments. 
 
-First we create the schema, then we iterate over 8 groups of 200 notes to create the generated data. To do this we first turn the note text, and system prompt, into a messages list 
+
+
 
 ```{r}
 # Make the JSON schema for our LLM prompt output. 
 json_schema <- make_json_schema()
 
-
 # create a list to hold the output of our llm prompts. 
 grok_ratings <- list()
 
-for (i in 1:8) {
+for (i in 1:100) {
   
   # create messages list
   notes_messages <- make_request_message(gaza_ukraine_texts_split[[i]])
@@ -112,48 +120,26 @@ for (i in 1:8) {
   grok_ratings_request_output <- perform_request(messages=notes_messages, notes_json_schema=json_schema)
 
   # pull out content from response, of JSON output
-  json_data_string <- resp_body_json(grok_ratings_request_output)$choices[[1]]$message$content
+  json_data_string <- resp_body_json(grok_ratings_request_output)$choices[[1]]$message$content[1]
   
   # save JSON output to list of ratings.
-  grok_ratings[i] <- fromJSON(json_data_string)
+  grok_ratings[[i]] <- json_data_string
+  print("round complete")
+  print(i)
 }
 ```
 
+```{r}
 
-From this we got 8 different llm outputs, ostensibly based on the note text passed in. However, in two of the eight outputs the number of rating sets generated by Grok did not match 200. This meant we could not directly mark them with their noteIds - as the match would not be one-to-one. 
-
-This is a bit of cause for concern generally with using the llm to generate data. We chose to just remove the 4th and 7th and continue with the other 6 groups of data - taking us to 1200 rows of generated llm data. 
-
-Though we spent a lot altering the prompt to have the exactly JSON output schema, there were still issues with the output. Fortunately, after iterating over a few different strategies, the only issue we faced with our final prompt was that there could be issues, 
+grok_frames <- lapply(grok_ratings_browser, format_grok_to_dataframe)
+```
 
 
 ```{r}
-# For example - all came out different.
-grok_ratings$one <- fromJSON(json_data_string)$notes
-grok_ratings$two <- fromJSON(json_data_string)$reasonEvaluations
-
-# For some the reason codes were nested.
-grok_ratings$seven <- grok_results$seven$notes %>% unnest(ratings)
-
-# print length of each rating frame (to check they are the expected output)
-for (i in 1:8){
-  print(length(grok_ratings[1]))
-}
-
-# This output gave that all the frames were 200 (as expected) except for the 4th (which had 3 extra rows) and 
-# the seventh, which had 1 missing row. 
-
-# added the noteId values back manually.
-grok_ratings$eight$note_id <- gaza_ukraine_notes$noteId[1401:1600]
-
-# valid ratings  
-valid_grok_outputs <- grok_ratings[-c(4,7)]
-valid_grok_ratings_frame <- bind_rows(valid_grok_outputs)
-
-# remove non-essential rows
-valid_grok_ratings_frame <- valid_grok_ratings_frame %>% dplyr::select(-c("noteText", "noteId"))
+valid_grok_ratings_frame <- bind_rows(grok_frames)
+valid_grok_ratings_frame$Note <- unname(unlist(gzuk_ids_split))[1:560]
+valid_grok_ratings_frame <- valid_grok_ratings_frame %>% rename(noteId=Note)
 
 # save grok outputs 
-write.csv(valid_grok_ratings_frame, "valid_grok_ratings.csv", row.names=FALSE)
-
+write.csv(valid_grok_ratings, "data/valid_grok_ratings_560.csv", row.names=FALSE)
 ```

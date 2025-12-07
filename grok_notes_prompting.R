@@ -98,3 +98,33 @@ perform_request <- function(model=grok_model, messages=notes_messages, api_key=g
 
   return(request_output)
 }
+
+
+format_grok_to_dataframe <- function(json_string) {
+  
+  flat_data_df <- fromJSON(json_data_string) %>%
+    as.data.frame()
+  final_df <- flat_data_df %>%
+    pivot_longer(
+      cols = everything(), 
+      names_to = "Key", 
+      values_to = "Value"
+    ) %>%
+    separate(
+      col = Key, 
+      into = c("Note", "Criterion"), 
+      sep = "_", 
+      extra = "merge",
+      remove = TRUE
+    ) %>%
+    pivot_wider(
+      id_cols = Note, 
+      names_from = Criterion, 
+      values_from = Value
+    ) %>%
+    arrange(as.numeric(str_replace(Note, "note", "")))
+  
+  return(final_df)
+}
+
+
