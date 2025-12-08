@@ -71,9 +71,11 @@ After looking at some of the data, we only have some columns that are helpful. U
 
 
 # Talk about why we chose which ratings parameters (could not include those that have are really reliant on the tweet, because we don't have that text)
-These are the rating attributes I have removed:helpfulAddressesClaim", "helpfulImportantContext","notHelpfulMissingKeyPoints","notHelpfulIrrelevantSources",  "notHelpfulNoteNotNeeded"
+These are the rating attributes we have removed: "helpfulAddressesClaim", "helpfulImportantContext","notHelpfulMissingKeyPoints","notHelpfulIrrelevantSources",  
+"notHelpfulNoteNotNeeded"
 
-The Grok API key is loaded in as a system variable. We use grok-3 because this was the most cost effective way to do our prompt engineering. 
+The Grok API key is loaded in as a system variable. We use grok-3 because this 
+was the most cost effective way to do our prompt engineering. 
 
 Load in model parameters for prompting: 
 ```{r}
@@ -99,9 +101,9 @@ User prompt looks like this:
 
 # Create the Ratings 
 
-The code for the actual api calls can be found in `grok_notes_prompting.R` but below we perform the batched api calls. We decided to do this here and not in the script because processing the generated data required quite a bit of effort and manual adjustments. 
-
-
+The code for the actual api calls can be found in `grok_notes_prompting.R` but below 
+we perform the batched api calls. We decided to do this here and not in the script 
+because processing the generated data required quite a bit of effort and manual adjustments. 
 
 
 ```{r}
@@ -129,13 +131,10 @@ for (i in 1:100) {
 }
 ```
 
-```{r}
+Below we combine the grok outputs into one data frame, ready for modeling. 
 
+```{r}
 grok_frames <- lapply(grok_ratings_browser, format_grok_to_dataframe)
-```
-
-
-```{r}
 valid_grok_ratings_frame <- bind_rows(grok_frames)
 valid_grok_ratings_frame$Note <- unname(unlist(gzuk_ids_split))[1:560]
 valid_grok_ratings_frame <- valid_grok_ratings_frame %>% rename(noteId=Note)

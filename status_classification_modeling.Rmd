@@ -11,18 +11,13 @@ library(ROCR)
 source("classification.R")
 ```
 
-
-
 Read in the valid notes data, with topic markers, the ratings data and the generated LLM outputs
 
 ```{r}
 notes <- read_csv("data/topic_valid_notes.csv", col_types=cols(noteId=col_character()))
 ratings <- read_csv("data/valid_ratings.csv", col_types=cols(noteId=col_character()))
 grok_output <- read_csv("data/valid_grok_ratings_560.csv", col_types=cols(noteId=col_character()))
-```
 
-
-```{r}
 # check our notes and ratings match exactly 
 setdiff(notes[["noteId"]], ratings[["noteId"]])
 ```
@@ -34,7 +29,7 @@ Ratings include our topic markers - so we'll mark the notes that have grok outpu
 notes <- notes %>% mutate(has_grok_output = (noteId %in% (grok_output %>% pull(noteId)))) 
 
 print(notes %>% filter(has_grok_output, (topic=="1_Ukraine"))) 
-print(notes %>% filter(has_grok_output, (topic=="2_Gaza"))) 
+print(notes %>% filter(has_grok_output, (topic=="2_Gaza")) %>% dplyr::select(starts_with(note_text)))
 
 ```
 
@@ -54,12 +49,8 @@ rated_notes_binned <- rated_notes %>% mutate(across(all_of(rating_vars[-length(r
 
 Though we have the notes metadata (i.e. what the note writer thinks of the tweet) this should be not considered directly as predicting locked status. Our hope more with including these is to give the models an understanding of consensus between note makers and note raters. 
 
-We end up with only binary variables from the note data. 
-
-Actually having the ratings be means and the LLM output let's us think about the nuance of opinion that a range of raters let's us have. 
 
 # Modeling 
-
 
 We'll start with a very simple model to check that helpfulness tracks to a positive `LockedStatus`. 
 
@@ -69,61 +60,26 @@ base_model <- glm(data=rated_notes, locked_helpful ~ helpfulnessScore, family="b
 summary(base_model)
 ```
 
+Next, we split our data into notes that have corresponding grok outputs and notes that do not. We train the model on only notes that do not have corresponding outputs, so that we can comparing the performance of the grok ratings with the human ratings. 
 
 ```{r}
 modeling_data <- get_llm_note_ids(grok_output, rated_notes_binned)
 non_grok_rated_notes <- modeling_data$non_grok_rated_notes
 human_rated_notes_corr_grok <- modeling_data$grok_rated_notes
   
-
-fit_log_rf <- function(notes_data){
-  if(isFALSE(tibble::is_tibble(notes_data))){
-    stop("restaurant_data should be a tibble")
-  }
-  set.seed(123) # For reproducibility
-
-  train_ratio <- 0.7 
-  smp_size <- floor(train_ratio * nrow(notes_data))
-  
-  train_indices <- sample(seq_len(nrow(notes_data)), size = smp_size)
-
-  train <- notes_data[train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars)) 
-  test <- notes_data[-train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars))
-
-  outcomes <- test$locked_helpful
-  
-  # logistic regression  
-  fit.lm <- glm(locked_helpful ~ ., data=train, family="binomial")
-  logistic_predictions <- predict(fit.lm, newdata = test, type = "response")
-  rocr_prediction_test <- ROCR::prediction(logistic_predictions, outcomes)
-  auc_logistic <- c(performance(rocr_prediction_test, "auc")@y.values[[1]])
-  
-  # random forest
-  fit.rf <- ranger(locked_helpful ~ .,
-                   data = train, 
-                   num.trees = 50,
-                   respect.unordered.factors = TRUE, 
-                   probability = TRUE)
-  
-  rf_pred <- predict(fit.rf, data = test, type="response")
-  rf_predictions <- rf_pred$predictions[,1]
-  
-  rocr_prediction_test <- ROCR::prediction(rf_predictions, outcomes)
-  auc_rf <- c(performance(rocr_prediction_test, "auc")@y.values[[1]])
-  
-  # output 
-  output <- list(outcomes, logistic_predictions, rf_predictions, auc_logistic, auc_rf, fit.lm, fit.rf)
-  names(output) <- c("outcomes", "logistic_predictions", "rf_predictions", "auc_logistic", "auc_rf", "log_model", "rf_model")
-  
-  return(output)
-
-}
-
+# run the function that fits the logitic regression and random forest model, returning the models and 
+# evaluation metrics.
 model_outputs <- fit_log_rf(non_grok_rated_notes)
 ```
 
+As the model performs so well on all topics, there are likely better strategies to compare the LLM outputs to the human rated outputs. Below we will look at the average difference between the every. We'll do this with the meaned ratings as well as with the meaned ratings binarized.
+
+Essentially for every rating type we will find the difference between the LLM ratings and the human rating, sum this for the whole row (so we have a total difference). 
+
+As a note, though the ratings data is tree structured, we will include all variables. 
 
 ```{r}
+# Create predictions for grok data
 grok_output_clean_labs <- left_join(grok_output_clean, human_rated_notes_corr_grok %>% dplyr::select(noteId, locked_helpful), by="noteId")
 
 logistic_predictions_grok <- predict(model_outputs$log_model, newdata = grok_output_clean_labs, type = "response")
@@ -142,8 +98,6 @@ rf_predictions_grok  <- rf_pred_grok $predictions[,1]
 rocr_prediction_test_grok <- ROCR::prediction(rf_predictions_grok, grok_output_clean_labs$locked_helpful)
 auc_rf_grok <- c(performance(rocr_prediction_test_grok, "auc")@y.values[[1]])
 
-
-
 rf_pred_humangrok <- predict(model_outputs$rf_model, data = human_rated_notes_corr_grok, type="response")
 rf_predictions_humangrok  <- rf_pred_humangrok$predictions[,1]
 
@@ -154,41 +108,18 @@ auc_rf_humangrok <- c(performance(rocr_prediction_test_humangrok, "auc")@y.value
 ```
 
 
-As the model performs so well on all topics, there are likely better strategies to compare the LLM outputs to the human rated outputs. Below we will look at the average difference between the every. We'll do this with the meaned ratings as well as with the meaned ratings binarized. 
 
-Essentially for every rating type we will find the difference between the LLM ratings and the human rating, sum this for the whole row (so we have a total difference). 
+# Bespoke RMSE Metric 
 
-As a note, though the ratings data is tree structured, we will include all variables. 
+This bespoke difference metric calculates the difference in grok rating against human rating for all rating elements in one single row. Then these are summed and squared. This gives us a measure of the discrepancy between the two types of ratings, which we can compare across different groups. Specifically, we compare how the Ukraine conflict ratings compare to the Gaza conflict ratings.
 
 ```{r}
-
 combined_ratings <- left_join(grok_rated_notes, grok_clean, by="noteId", suffix=c(".human", ".grok"))
 
 # get our 10 comparable rating values
 helpfulness_names <- names(combined_ratings) %>%
   grep("\\.human$", ., value = TRUE) %>%
   gsub("\\.human$", "", .)
-
-
-find_diffs <- function(ratings_frame_combined){
-  
-  rating_diffs <- ratings_frame_combined %>%
-  # get values that start with the base names
-  dplyr::select(starts_with(helpfulness_names), noteId, topic) %>% 
-  # 
-  mutate(across(
-    .cols = all_of(paste0(helpfulness_names, ".human")), 
-    .fns = ~ . - get(gsub("\\.human$", ".grok", cur_column())), 
-    .names = "diff.{gsub('.human$', '', col)}" 
-  ),
-  sum_o_squares = rowSums(across(all_of(starts_with("diff")), ~ .^2))) %>% 
-  
-  # Select only the newly created difference columns
-  dplyr::select(starts_with("diff."), noteId, sum_o_squares, topic)
-  
-  return(rating_diffs)
-
-}
 
 non_bin_diffs <- find_diffs(combined_ratings)
 non_bin_diffs %>% group_by(topic) %>% summarize(mean_eval_score=mean(sum_o_squares))
@@ -199,17 +130,6 @@ bin_diffs <- find_diffs(binned_combined_ratings)
 
 bin_diffs %>% group_by(topic) %>% summarize(mean_eval_score=mean(sum_o_squares))
 ```
-
-
-We don't want to average out these differences, so we square and then sum them. 
-
-
-
-
-
-Both of these models do really really well. This is great, though not unexpected. We will now compare our llm outputs! 
-
-
 
 
 

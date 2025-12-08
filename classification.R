@@ -1,6 +1,5 @@
 # Modeling Status 
 
-
 note_vars <- c("misleadingOther", "misleadingFactualError", "misleadingManipulatedMedia", 
                "misleadingOutdatedInformation", "misleadingMissingImportantContext", 
                "misleadingUnverifiedClaimAsFact", "misleadingSatire", "notMisleadingOther",               
@@ -81,6 +80,72 @@ get_llm_note_ids <- function(grok_outputs, rated_notes) {
   output <- list(non_grok_rated_notes =rated_notes %>% filter(!(noteId %in% grok_outputs[["noteId"]])),
                    grok_rated_notes=rated_notes %>% filter(noteId %in% grok_outputs[["noteId"]]))
   return(output)
+}
+
+
+fit_log_rf <- function(notes_data){
+  if(isFALSE(tibble::is_tibble(notes_data))){
+    stop("restaurant_data should be a tibble")
+  }
+  set.seed(123) # For reproducibility
+  
+  train_ratio <- 0.7 
+  smp_size <- floor(train_ratio * nrow(notes_data))
+  
+  train_indices <- sample(seq_len(nrow(notes_data)), size = smp_size)
+  
+  train <- notes_data[train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars)) 
+  test <- notes_data[-train_indices, ] %>% dplyr::select(locked_helpful, trustworthySources, all_of(rating_vars))
+  
+  outcomes <- test$locked_helpful
+  
+  # logistic regression  
+  fit.lm <- glm(locked_helpful ~ ., data=train, family="binomial")
+  logistic_predictions <- predict(fit.lm, newdata = test, type = "response")
+  rocr_prediction_test <- ROCR::prediction(logistic_predictions, outcomes)
+  auc_logistic <- c(performance(rocr_prediction_test, "auc")@y.values[[1]])
+  
+  # random forest
+  fit.rf <- ranger(locked_helpful ~ .,
+                   data = train, 
+                   num.trees = 50,
+                   respect.unordered.factors = TRUE, 
+                   probability = TRUE)
+  
+  rf_pred <- predict(fit.rf, data = test, type="response")
+  rf_predictions <- rf_pred$predictions[,1]
+  
+  rocr_prediction_test <- ROCR::prediction(rf_predictions, outcomes)
+  auc_rf <- c(performance(rocr_prediction_test, "auc")@y.values[[1]])
+  
+  # output 
+  output <- list(outcomes, logistic_predictions, rf_predictions, auc_logistic, auc_rf, fit.lm, fit.rf)
+  names(output) <- c("outcomes", "logistic_predictions", "rf_predictions", "auc_logistic", "auc_rf", "log_model", "rf_model")
+  
+  return(output)
+  
+}
+
+
+find_diffs <- function(ratings_frame_combined){
+  
+  rating_diffs <- ratings_frame_combined %>%
+    # get values that start with the base names
+    dplyr::select(starts_with(helpfulness_names), noteId, topic) %>% 
+    # 
+    mutate(across(
+      .cols = all_of(paste0(helpfulness_names, ".human")), 
+      .fns = ~ . - get(gsub("\\.human$", ".grok", cur_column())), 
+      .names = "diff.{gsub('.human$', '', col)}" 
+    ),
+    # create sum of squares for row
+    sum_o_squares = rowSums(across(all_of(starts_with("diff")), ~ .^2))) %>% 
+    
+    # Select only the newly created difference columns
+    dplyr::select(starts_with("diff."), noteId, sum_o_squares, topic)
+  
+  return(rating_diffs)
+  
 }
 
 

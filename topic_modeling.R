@@ -83,6 +83,91 @@ mark_topics <- function(notes) {
   return(notes)
 }
 
+text_preprocessing <- function(notes_text) {
+  
+  custom_stopwords <- c(
+    "quote", "video", "account", "accounts", "post", "claim", "use", "quotes", "image")
+  
+  # Create tokens  - could look at making sub-words?
+  data_tokens <- quanteda::tokens(
+    full_notes_text,
+    # Preprocessing Steps 
+    remove_numbers = TRUE,
+    remove_punct = TRUE,
+    remove_symbols = TRUE,
+    remove_separators = TRUE, 
+    remove_url = TRUE
+  ) %>%
+    # make all tokens lower case
+    tokens_tolower() %>%
+    # removes list of stop words imported from the quanteda package. 
+    tokens_remove(
+      c(
+        quanteda::stopwords("english"), custom_stopwords
+      )
+    ) %>%
+    # stem words
+    tokens_wordstem(
+      language = quanteda_options("language_stemmer"),
+      verbose = quanteda_options("verbose")
+    ) %>% 
+    # removes tokens of length 2 or less
+    tokens_select(min_nchar = 3) 
+  
+  # word_counts_vector <- colSums(data_dfm)
+  # head(sort(word_counts_vector, decreasing = TRUE), 200)
+  
+  data_dfm <- dfm(data_tokens) %>%
+    # min_termfreq - removes features that appear less than five times across all documents 
+    # min_docfreq - removes features that appear in less than 2 distinct documents. 
+    # get 4200 from looking at the data. 
+    dfm_trim(min_termfreq = 5, min_docfreq = 2, max_termfreq = 3000)
+  
+  # find indices for rows that are not empty
+  logical_empty <- unname(rowSums(data_dfm) > 0)
+  
+  
+  # Subset dfm to only include those that do not have empty rows. 
+  data_dfm_filtered <- dfm_subset(
+    data_dfm,
+    logical_empty
+  )
+  
+  docs <- keyATM_read(
+    texts = data_dfm_filtered)
+  
+  output <- list(docs=docs, logical_empty=logical_empty)
+  return(output)
+  
+}
+  
+  
+assign_topics <- function(notes_frame, keyATM_output, non_empty_logical) {
+    # pull out the proportions of appearance in each topic group (out of the 10)
+    theta_matrix <- keyATM_output$theta
+    
+    # Find the column in which the highest likelihood topic appears. 
+    highest_prop_topic <- apply(theta_matrix, 1, which.max)
+    
+    # pull out topic names (this let's us see our seed topics)
+    topic_labels <- colnames(theta_matrix)
+    
+    # assign indices only to documents that were used in the topic modeling 
+    # remember we omitted some!
+    assigned_topics_name_filtered <- topic_labels[highest_prop_topic]
+    
+    
+    non_empty_doc_indices <- which(non_empty_logical)
+    
+    # create column of NA values 
+    notes_frame$keyATM_topic <- NA
+    
+    # Assign the topic group the documents (based on their indices)
+    notes_frame[non_empty_doc_indices, "keyATM_topic"] <- assigned_topics_name_filtered
+    
+    return(notes_frame)
+  }
+  
 
 
 

@@ -31,28 +31,13 @@ library(quanteda)
 ```
 
 
-### Data Imports
+# Data Imports
 
 The data, from the X website is updated daily. Meaning that can have data to this point that has 
 
 The notes can be found at the https://communitynotes.x.com/guide/en/under-the-hood/download-data, 
 however it should be noted that only users with X accounts can download the data. 
 
-A good description can be found at the same website.
-
-As an overview the data takes on the following form: 
-- `notes` contains information about a note generally and how it can be 
-
-
-# Description of Data 
-Data Sources, date and where they are located.
-
-Mention the difference when working with the ratings datasets 
-Script for reading in the ratings - reliant on the valid notes because of the 
-amount of data we are processing 
-
-# Data Load in 
-Describe dataset below and why we aren't doing the ratings processing yet. 
 
 ```{r}
 # Load in the notes data, the notes status history, the user enrollment and abat Signals 
@@ -68,11 +53,10 @@ We had to specify column type for the `noteId` explicitly, because we found that
 
 # Make the times interpretable.
 
-We also add `month_year` variables for the `notes` and `ratings` data. 
+We add `month_year` variables for the `notes` and `ratings` data. 
 
-We only do one ratings data frame (of the 20) here. 
-
-Within the custom make_notes cleaning functions below, each data frame has their, relevant, time variables altered so that they include a `month_year` variable.
+Within the custom make_notes cleaning functions below, each data frame has their, 
+relevant, time variables altered so that they include a `month_year` variable.
 
 ```{r}
 source('cleaning.R')
@@ -81,11 +65,6 @@ notes_status_history <- make_notes_history_times(notes_status_history)
 user_enrollment_status <- make_user_enrollment_status_times(user_enrollment_status)
 bat_signals <- make_bat_signals_times(bat_signals)
 ```
-
-
-# Data Description: 
-
-The data was taken from https://x.com/i/communitynotes/download-data (note: downloading this data does require an X account) on October 16th 2025. This means that the data we use are the community notes up to that date. 
 
 
 # Drop NA
@@ -102,17 +81,12 @@ colSums(is.na(notes))
 
 
 Cleaning Notes Further 
-- We found 2 notes with missing text values - we drop them
+- We found 2 notes with missing text values, we drop them.
 - We found 4 rows that are duplicates of other rows, so drop all 8 of these to 
 ensure no confusion (These are all classified as MISINFORMED_OR_POTENTIALLY_MISLEADING, however the rows are not exact duplicates. Even the text is different. Because of this confusion we drop the rows).
-    
-There are also 8 duplicates in notes status history - and they all have the NEEDS_MORE_RATINGS status, so we easily drop these rows. 
+- We remove the outdated variables.
 
-
-In the `clean_notes()` function called below a few things happen
-- The 2 missing notes are removed, 8 duplicated noteId values are removed - both the original version and the duplicate are remove. Finally, our exploration found that there are a few metrics that are were used in the very start of Community Notes 
-
-The code below outputs how missing values in the dataset behave over the `month_year` combinations. This gave us a good idea of how the data actually formed.
+The code below outputs how missing values in the data set behave over the `month_year` combinations. This gave us a good idea of how the data actually formed.
 
 ```{r}
 print(notes %>% group_by(month_year) %>% 
@@ -132,11 +106,21 @@ helpful. We can just look at one of these three values in order to see the
 number of missing values. Let's similarly count the number of missing values
 for each `month_year` value to see if there is an identifiable trend. 
 
-The output above shows that there are only non-missing values for `harmful`, `believeable` and `validationDifficulty` before the `2022-11` month. As we are going to limit our data to only notes after Community Notes went global, we just remove these rows entirely in the cleaning. 
+The output above shows that there are only non-missing values for `harmful`, 
+`believeable` and `validationDifficulty` before the `2022-11` month. As we are going 
+to limit our data to only notes after Community Notes went global, we just remove 
+these rows entirely in the cleaning. 
 
-`clean_bat_signals()` limits the `tweetId` values to those that are 19 character long (as they should be) and makes a list of sources for each tweet. When a bat signal is sent (i.e. a user requests a community note on a tweet) they can supply a url of a website that contains information that may be relevant to a community note. As there can be multiple bat signals for a tweet, we created lists of source links. Though this is not used in this project, it may be helpful moving forward. 
+`clean_bat_signals()` limits the `tweetId` values to those that are 19 characters 
+long (as they should be) and makes a list of sources for each tweet. When a bat signal 
+is sent (i.e. a user requests a community note on a tweet) they can supply a url of 
+a website that contains information that may be relevant to a community note. 
+As there can be multiple bat signals for a tweet, we created lists of source links. 
+Though this is not used in this project, it may be helpful moving forward. 
 
-We also remove notes that have `isMediaNote` - meaning that the note is based on the media in the tweet - not the text. This makes these notes not useful in our analysis because our evaluations will all be text based. 
+We also remove notes that have `isMediaNote` - meaning that the note is based on 
+the media in the tweet - not the text. This makes these notes not useful in our 
+analysis because our evaluations will all be text based. 
 
 ```{r}
 source("cleaning.R")
@@ -148,7 +132,11 @@ bat_signals <- clean_bat_signals(bat_signals)
 
 Let's look a bit into the validity of each note as being helpful or not. 
 
-Below we look at how many notes never recieved their first Non-NMR status. This is an indicator of how many notes never gained a enough ratings to be considered `helpful` or `notHelpful`. A major potential flaw in the system is that there could simply not be enough people using Community Notes - this is a major motivator for implementing an LLM to do the work of rating notes. 
+Below we look at how many notes never recieved their first Non-NMR status.
+This is an indicator of how many notes never gained a enough ratings to be 
+considered `helpful` or `notHelpful`. A major potential flaw in the system is 
+that there could simply not be enough people using Community Notes - this is a 
+major motivator for implementing an LLM to do the work of rating notes. 
 
 ```{r}
 # all notes
@@ -172,7 +160,10 @@ Then in only English:
 
 There is likely something to be said about the validity of content moderation in different languages. 
 
-There is a difference between a firstNonNMRStatus and LockedStatus. Looking at firstNONNMRStatus let's us get an idea of how many notes never get enough ratings to change status. Looking at LockedStatus let's us see how may notes get a final decision on their helpfulness.
+There is a difference between a firstNonNMRStatus and LockedStatus. Looking at 
+firstNONNMRStatus let's us get an idea of how many notes never get enough ratings 
+to change status. Looking at LockedStatus let's us see how may notes get a final 
+decision on their helpfulness.
 
 ```{r}
 table(notes_status_history$lockedStatus, useNA="ifany")
@@ -195,19 +186,28 @@ Then in only English:
 986963 are `NEEDS_MORE_RATINGS`
 68388 are `NA`
 
-It is really surprising how many NA values are here - we struggled to get an understanding from the documentation why this is. Intuitively, it seems that it would make sense for there to be some reason, or inherent coding, as to why there are so many missing values. 
+It is really surprising how many NA values are here - we struggled to get an 
+understanding from the documentation why this is. Intuitively, it seems that it 
+would make sense for there to be some reason, or inherent coding, as to why there 
+are so many missing values. 
 
 
 # Here we can do some analysis of notes over time. 
 
-We could have done this in our initial cleaning, but felt that looking a bit into trends over time was helpful.
+We could have done this in our initial cleaning, but felt that looking a bit into 
+trends over time was helpful.
 
-Limit time to relevant area - from when it went global (In November 2022) to September 2025 (get a full month). This does not get rid of too much data because there really wasn't much use before March 2023.
+Limit time to relevant area - from when it went global (In November 2022) to 
+September 2025 (get a full month). This does not get rid of too much data because 
+there really wasn't much use before March 2023.
 
-As we have said from the exploration above, there is a demarcation with when community notes became really actively used. And we only have data that goes up to October 16th 2025. (Relevant that the ceasefire was on October 10th 2025)
+As we have said from the exploration above, there is a demarcation with when 
+community notes became really actively used. And we only have data that goes up 
+to October 16th 2025. (Relevant that the ceasefire was on October 10th 2025).
 
-
-Now that we have month_year combinations we can look a bit into how the number of notes and ratings have changed over time. It is also interesting to see how many ratings per note there are. 
+Now that we have month_year combinations we can look a bit into how the number 
+of notes and ratings have changed over time. It is also interesting to see how 
+many ratings per note there are. 
 
 ```{r}
 ggplot(data = notes, aes(x = month_year)) +
@@ -223,21 +223,28 @@ ggplot(data = notes, aes(x = month_year)) +
 ```
 
 
-From looking into this data, we think it makes sense to look at a time frame where the platform was being consistently used. Community Notes was initially launched only in the US, in January 2021 but was introduced globally on December 12th 2022. However, it didn't really pick up until March 2023 (the total count of notes went from 5000 to 15000 from February to April). We therefore decide to limit our valid notes to those from November 2022 to, and including September 2025. 
-
+From looking into this data, we think it makes sense to look at a time frame where 
+the platform was being consistently used. Community Notes was initially launched 
+only in the US, in January 2021 but was introduced globally on December 12th 2022. 
+However, it didn't really pick up until March 2023 (the total count of notes went 
+from 5000 to 15000 from February to April). We therefore decide to limit our 
+valid notes to those from November 2022 to, and including September 2025. 
 
 
 # Getting Valid Notes
 
-Once we have our cleaned data, we can begin to think about what makes a note valid for our analysis. In `get_valid_notes()`, the `notes` and `notes_status_history` data frames are combined. This is because we define a note that is valid for analysis as one that has a `lockedStatus` of either `CURRENTLY_RATED_HELPFUL` or `CURRENTLY_RATED_NOT_HELPFUL`. The locked status comes when there has been no change in the note for 2 weeks. 
+Once we have our cleaned data, we can begin to think about what makes a note 
+valid for our analysis. In `get_valid_notes()`, the `notes` and `notes_status_history`
+data frames are combined. This is because we define a note that is valid for analysis
+as one that has a `lockedStatus` of either `CURRENTLY_RATED_HELPFUL` or 
+`CURRENTLY_RATED_NOT_HELPFUL`. The locked status comes when there has been no change 
+in the note for 2 weeks. 
 
 
 ```{r}
 valid_notes <- get_valid_notes(notes, notes_status_history)
 english_valid_notes <- limit_english(valid_notes)
 
-# Additional code for potential tweet note integration
-#notes_w_sourcelink <- left_join(notes, batSignals_complete, by="tweetId")
 
 ```
 
@@ -245,7 +252,13 @@ We have 127880 valid notes in english.
 
 # Ratings Read in 
 
-There is a lot of ratings data, so we process it on import to ensure that we only have the necessary data loaded in. This is based on our time frame, though we do not limit ratings to September 2025 - we allow ratings from October 2025 on notes written in September 2025 to be part of this data set. However, because there are so many notes we limit the ratings to those that have a `noteId` in our valid subset. This does mean that we do not look at all of the data but, we are only looking at ratings that have a meaning in our analysis.
+There is a lot of ratings data, so we process it on import to ensure that we only 
+have the necessary data loaded in. This is based on our time frame, though we do 
+not limit ratings to September 2025 - we allow ratings from October 2025 on notes 
+written in September 2025 to be part of this data set. However, because there are 
+so many notes we limit the ratings to those that have a `noteId` in our valid subset. 
+This does mean that we do not look at all of the data but, we are only looking at 
+ratings that have a meaning in our analysis.
 
 
 ```{r}
@@ -256,7 +269,8 @@ english_valid_notes_ids <- english_valid_notes %>% pull(noteId)
 ratings_valid <- read_in_ratings(english_valid_notes_ids)
 ```
 
-Now we have the data that we believe to be valid in our exploration, we can look at how it is spread over time. 
+Now we have the data that we believe to be valid in our exploration, we can look 
+at how it is spread over time. 
 ```{r}
 ggplot(data = valid_notes, aes(x = month_year)) +
   geom_bar() + 
@@ -278,14 +292,16 @@ ggplot(data = ratings_valid, aes(x = month_year)) +
     }
   ) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
-  labs(x="Date of Note Creation (in Months)", y="Number of Notes Created")
+  labs(x="Date of Rating Creation (in Months)", y="Number of Ratings Created")
 
 ```
 
-These plots both show that the notes and ratings are fairly well spread out over the time period. Just to reiterate, the ratings data period is one month longer than the notes time period. This allows for a set of valid ratings on a these final notes (from September 2025).
+These plots both show that the notes and ratings are fairly well spread out over 
+the time period. Just to reiterate, the ratings data period is one month longer 
+than the notes time period. This allows for a set of valid ratings on a these 
+final notes (from September 2025).
 
 
-Now let's look a bit into notes and ratings combinations. We should find that every note in our valid dataset has at least 10 ratings. If not, it is not possible for the note to have obtained a `LockedStatus`. 
 
 ```{r}
 # Create counts for how many ratings each note has 
@@ -297,7 +313,9 @@ notes_w_counts <- left_join(valid_notes, ratings_note_counts, by="noteId")
 ggplot(data=notes_w_counts %>% filter(number_of_ratings < 100), aes(x=number_of_ratings)) + geom_bar() + labs(x="Number of Ratings for One Note", y="Count of Number of Ratings")
 ```
 
-We can see that there are some notes still with less than 10 ratings. To ensure the validity of our modeling we will limit our valid notes further to only those with at least 10 corresponding ratings in our data set. 
+We can see that there are some notes still with less than 10 ratings. To ensure 
+the validity of our modeling we will limit our valid notes further to only those 
+with at least 10 corresponding ratings in our data set. 
 
 ```{r}
 valid_notes_by_count_id <- notes_w_counts %>% filter(number_of_ratings >= 10) %>% pull(noteId)
@@ -315,9 +333,6 @@ valid_notes_combined <- left_join(valid_notes, valid_ratings %>% group_by(noteId
 summary(valid_notes_combined$number_of_ratings)
 ```
 
-
-   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-   10.0    41.0    77.0   149.2   149.0 22272.0 
    
 This is pretty severely right skewed. 
 
@@ -329,5 +344,7 @@ write.csv(valid_ratings, "data/valid_ratings.csv", row.names=FALSE)
 
 Finally, we have 124,347 notes and 18,551,817 ratings.
 
-We have lost a lot of data in this process. Starting with 2,153,194 notes and ending with 138,884. A large portion of this missing data does come from notes that could not be identified as English. 
+We have lost a lot of data in this process. Starting with 2,153,194 notes and 
+ending with 138,884. A large portion of this missing data does come from notes 
+that could not be identified as English. 
 
